@@ -1,5 +1,11 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+// Load ~/.claude/pinta-cc.env BEFORE any other import that may read process.env.
+// Manager v0.1.6+ writes the env file; v0.1.5 (shell-prefix) still works because
+// loadEnvFile only fills in unset keys. See src/env-file.ts for the migration
+// rationale.
+const env_file_js_1 = require("./env-file.js");
+(0, env_file_js_1.loadEnvFile)();
 const env_bridge_js_1 = require("./core/env-bridge.js");
 const config_js_1 = require("./core/config.js");
 const types_js_1 = require("./core/types.js");
