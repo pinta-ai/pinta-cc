@@ -2,6 +2,37 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.3.0] - 2026-05-26
+
+### Added
+
+- `src/env-file.ts` — graceful loader for `~/.claude/pinta-cc.env`. The adaptor
+  now reads `KEY=VALUE` pairs from that file at startup and merges any
+  unset keys into `process.env`. Existing values (shell-exported by the
+  user, or injected by an older Pinta Manager's shell prefix) are
+  preserved — `process.env[k] ??= envFile[k]`.
+- `tests/env-file.test.ts` — covers file-exists, file-missing (silent
+  no-op), comment/blank lines, no-overwrite of existing keys, and
+  malformed-line tolerance.
+
+### Migration
+
+This is a forward-compatible release. The new loader is paired with Pinta
+Manager v0.1.6, which writes `~/.claude/pinta-cc.env` instead of
+prefixing the hook `command` with a POSIX shell env assignment
+(`KEY='val' node ...`). The shell-prefix form is broken on native
+Windows shells (cmd.exe / PowerShell); switching to an env file removes
+the shell dependency.
+
+- New adaptor (1.3.0) + new manager (v0.1.6+): env file is read, hook
+  command is plain `node <plugin-root>/dist/index.js`.
+- New adaptor (1.3.0) + old manager (v0.1.5): env file is missing,
+  loader silently no-ops, and the shell prefix's already-injected
+  `process.env` values flow through unchanged.
+
+See `docs/features/v0.1.6/cc-env-file.md` in pinta-manager for the
+catalog-first rollout plan that this release enables.
+
 ## [1.2.0] - 2026-04-29 (BREAKING)
 
 ### BREAKING CHANGES
