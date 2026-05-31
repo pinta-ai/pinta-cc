@@ -8,6 +8,10 @@ export interface GuardInput {
 export interface GuardResult {
   decision: 'ALLOW' | 'DENY' | 'REVIEW';
   reason: string | null;
+  // Pre-formatted message the manager wants surfaced to the LLM/user when
+  // decision === 'DENY'. Null otherwise, or when talking to an older manager
+  // that doesn't yet emit this field.
+  userMessage: string | null;
   durationMs: number;
   failOpenReason?: 'timeout' | 'refused' | 'error';
 }
@@ -44,12 +48,22 @@ export async function evaluateGuard(
       sleep(TIMEOUT_MS),
     ]);
     if (res.status !== 200) {
-      return { decision: 'ALLOW', reason: null, durationMs: Date.now() - start, failOpenReason: 'error' };
+      return { decision: 'ALLOW', reason: null, userMessage: null, durationMs: Date.now() - start, failOpenReason: 'error' };
     }
-    const body = (await res.json()) as { decision: GuardResult['decision']; reason: string | null; durationMs?: number };
-    return { decision: body.decision, reason: body.reason, durationMs: body.durationMs ?? (Date.now() - start) };
+    const body = (await res.json()) as {
+      decision: GuardResult['decision'];
+      reason: string | null;
+      userMessage?: string | null;
+      durationMs?: number;
+    };
+    return {
+      decision: body.decision,
+      reason: body.reason,
+      userMessage: body.userMessage ?? null,
+      durationMs: body.durationMs ?? (Date.now() - start),
+    };
   } catch (err) {
     const reason: GuardResult['failOpenReason'] = (err as Error).name === 'TimeoutError' ? 'timeout' : 'error';
-    return { decision: 'ALLOW', reason: null, durationMs: Date.now() - start, failOpenReason: reason };
+    return { decision: 'ALLOW', reason: null, userMessage: null, durationMs: Date.now() - start, failOpenReason: reason };
   }
 }

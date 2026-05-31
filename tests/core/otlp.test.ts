@@ -65,7 +65,7 @@ describe('buildOtlpPayload (v1.2.0 — generic)', () => {
         tool_use_id: 'u1',
       } as any,
       traceId: '01HQXM7Y9YZJ8MK7Z6P3X1V8R0',
-      guard: { decision: 'DENY', reason: 'deny_credentials', durationMs: 8 },
+      guard: { decision: 'DENY', reason: 'deny_credentials', userMessage: '⛔ Blocked by Pinta AI — deny_credentials', durationMs: 8 },
     });
     const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
     const decision = span.attributes.find((a: any) => a.key === 'pinta.guard.decision');

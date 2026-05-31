@@ -11,16 +11,38 @@ describe('evaluateGuard', () => {
     expect(r).toBeNull();
   });
 
-  it('returns parsed decision on 200', async () => {
+  it('returns parsed decision on 200 (with userMessage)', async () => {
     globalThis.fetch = vi.fn(async () => new Response(
-      JSON.stringify({ decision: 'DENY', reason: 'deny_credentials', durationMs: 8 }),
+      JSON.stringify({
+        decision: 'DENY',
+        reason: 'deny_credentials',
+        userMessage: '⛔ Blocked by Pinta AI — deny_credentials',
+        durationMs: 8,
+      }),
       { status: 200, headers: { 'content-type': 'application/json' } },
     )) as never;
     const r = await evaluateGuard(
       { spanId: 's', toolName: 'Bash', toolInput: 'echo $AWS' },
       'http://127.0.0.1:5147/guard/evaluate',
     );
-    expect(r).toEqual<GuardResult>({ decision: 'DENY', reason: 'deny_credentials', durationMs: 8 });
+    expect(r).toEqual<GuardResult>({
+      decision: 'DENY',
+      reason: 'deny_credentials',
+      userMessage: '⛔ Blocked by Pinta AI — deny_credentials',
+      durationMs: 8,
+    });
+  });
+
+  it('tolerates older manager that omits userMessage (defaults to null)', async () => {
+    globalThis.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ decision: 'DENY', reason: 'deny_credentials', durationMs: 8 }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    )) as never;
+    const r = await evaluateGuard(
+      { spanId: 's', toolName: 'Bash' },
+      'http://127.0.0.1:5147/guard/evaluate',
+    );
+    expect(r?.userMessage).toBeNull();
   });
 
   it('returns fail-open on timeout', async () => {
