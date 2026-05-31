@@ -28,14 +28,19 @@ async function evaluateGuard(input, endpoint) {
             sleep(TIMEOUT_MS),
         ]);
         if (res.status !== 200) {
-            return { decision: 'ALLOW', reason: null, durationMs: Date.now() - start, failOpenReason: 'error' };
+            return { decision: 'ALLOW', reason: null, userMessage: null, durationMs: Date.now() - start, failOpenReason: 'error' };
         }
         const body = (await res.json());
-        return { decision: body.decision, reason: body.reason, durationMs: body.durationMs ?? (Date.now() - start) };
+        return {
+            decision: body.decision,
+            reason: body.reason,
+            userMessage: body.userMessage ?? null,
+            durationMs: body.durationMs ?? (Date.now() - start),
+        };
     }
     catch (err) {
         const reason = err.name === 'TimeoutError' ? 'timeout' : 'error';
-        return { decision: 'ALLOW', reason: null, durationMs: Date.now() - start, failOpenReason: reason };
+        return { decision: 'ALLOW', reason: null, userMessage: null, durationMs: Date.now() - start, failOpenReason: reason };
     }
 }
 //# sourceMappingURL=guard.js.map

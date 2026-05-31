@@ -22,11 +22,15 @@ async function handlePreToolUse(event, config) {
     const payload = (0, otlp_js_1.buildOtlpPayload)({ event, traceId, guard });
     await transport.send(payload);
     if (guard?.decision === 'DENY') {
+        // Prefer manager-supplied userMessage (carries the "Blocked by Pinta AI"
+        // brand text + rule). Fall back to raw rule name for older managers, and
+        // to 'guard_deny' literal if even reason is missing.
+        const reason = guard.userMessage ?? guard.reason ?? 'guard_deny';
         const out = {
             hookSpecificOutput: {
                 hookEventName: 'PreToolUse',
                 permissionDecision: 'deny',
-                permissionDecisionReason: guard.reason ?? 'guard_deny',
+                permissionDecisionReason: reason,
             },
         };
         process.stdout.write(JSON.stringify(out) + '\n');

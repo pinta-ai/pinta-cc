@@ -7,6 +7,7 @@ export interface GuardInput {
 export interface GuardResult {
     decision: 'ALLOW' | 'DENY' | 'REVIEW';
     reason: string | null;
+    userMessage: string | null;
     durationMs: number;
     failOpenReason?: 'timeout' | 'refused' | 'error';
 }
