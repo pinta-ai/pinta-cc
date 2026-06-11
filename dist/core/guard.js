@@ -1,7 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.evaluateGuard = evaluateGuard;
-const TIMEOUT_MS = 50;
+const TIMEOUT_MS = 10_000;
 function sleep(ms) {
     return new Promise((_, reject) => setTimeout(() => {
         const err = new Error('Guard request timed out');
