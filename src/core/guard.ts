@@ -16,7 +16,7 @@ export interface GuardResult {
   failOpenReason?: 'timeout' | 'refused' | 'error';
 }
 
-const TIMEOUT_MS = 50;
+const TIMEOUT_MS = 10_000;
 
 function sleep(ms: number): Promise<never> {
   return new Promise((_, reject) =>

@@ -46,13 +46,20 @@ describe('evaluateGuard', () => {
   });
 
   it('returns fail-open on timeout', async () => {
-    globalThis.fetch = vi.fn(async () => new Promise(() => {})) as never;
-    const r = await evaluateGuard(
-      { spanId: 's', toolName: 'Bash' },
-      'http://127.0.0.1:5147/guard/evaluate',
-    );
-    expect(r?.decision).toBe('ALLOW');
-    expect(r?.failOpenReason).toBe('timeout');
+    vi.useFakeTimers();
+    try {
+      globalThis.fetch = vi.fn(() => new Promise(() => {})) as never;
+      const p = evaluateGuard(
+        { spanId: 's', toolName: 'Bash' },
+        'http://127.0.0.1:5147/guard/evaluate',
+      );
+      await vi.advanceTimersByTimeAsync(10_000);
+      const r = await p;
+      expect(r?.decision).toBe('ALLOW');
+      expect(r?.failOpenReason).toBe('timeout');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('returns fail-open on non-200', async () => {
