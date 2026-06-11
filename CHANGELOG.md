@@ -2,6 +2,15 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.3.2] - 2026-06-12
+
+### Changed
+
+- Guard request timeout raised from `50ms` to `10s` in `src/core/guard.ts`. The
+  previous 50ms window caused PreToolUse guard requests to fail open (`ALLOW`)
+  before the manager's `/guard/evaluate` could respond. The endpoint now has
+  time to actually evaluate. Fail-open behavior on timeout is unchanged.
+
 ## [1.3.1] - 2026-05-31
 
 ### Added
