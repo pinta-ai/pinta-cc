@@ -14,11 +14,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/awarecorp/pinta-cc.git"
+    "url": "https://github.com/pinta-ai/pinta-cc.git"
   },
-  "homepage": "https://github.com/awarecorp/pinta-cc#readme",
+  "homepage": "https://github.com/pinta-ai/pinta-cc#readme",
   "bugs": {
-    "url": "https://github.com/awarecorp/pinta-cc/issues"
+    "url": "https://github.com/pinta-ai/pinta-cc/issues"
   },
   "scripts": {
     "build": "tsc",
