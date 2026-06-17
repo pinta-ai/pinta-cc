@@ -1,6 +1,6 @@
 {
   "name": "@pinta-ai/pinta-cc",
-  "version": "1.3.2",
+  "version": "1.4.0",
   "description": "Generic OTLP forwarder for Claude Code hook events",
   "main": "dist/index.js",
   "license": "PolyForm-Noncommercial-1.0.0",
