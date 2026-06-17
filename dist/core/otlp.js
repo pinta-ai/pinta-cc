@@ -12,7 +12,7 @@ const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const redact_js_1 = require("./redact.js");
-const PLUGIN_VERSION = "1.2.0"; // keep in sync with .claude-plugin/plugin.json
+const PLUGIN_VERSION = "1.4.1"; // keep in sync with .claude-plugin/plugin.json
 /**
  * Resolve the Claude Code CLI version by walking up from the binary path
  * (CLAUDE_CODE_EXECPATH) until we find the `@anthropic-ai/claude-code`
