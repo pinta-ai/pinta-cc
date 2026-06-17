@@ -16,7 +16,7 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 | Channel | Install path | Auto-update |
 |---------|-------------|-------------|
 | **Pinta Manager v0.2+** | Manager installs and configures automatically | Yes — on manager reconcile |
-| **Marketplace `pinta-cc@pinta-ai`** | `/plugin marketplace add awarecorp/pinta-cc` then `/plugin install pinta-cc@pinta-ai` | Yes — on Claude Code startup |
+| **Marketplace `pinta-cc@pinta-ai`** | `/plugin marketplace add pinta-ai/pinta-cc` then `/plugin install pinta-cc@pinta-ai` | Yes — on Claude Code startup |
 
 ## Installation
 
@@ -27,7 +27,7 @@ Pinta Manager v0.2+ handles installation and configuration automatically. No man
 ### Marketplace
 
 ```bash
-/plugin marketplace add awarecorp/pinta-cc
+/plugin marketplace add pinta-ai/pinta-cc
 /plugin install pinta-cc@pinta-ai
 ```
 
@@ -36,13 +36,13 @@ After installation, Claude Code automatically pulls new versions from the market
 ### Direct from GitHub
 
 ```bash
-claude plugin install github:awarecorp/pinta-cc
+claude plugin install github:pinta-ai/pinta-cc
 ```
 
 ### Local development
 
 ```bash
-git clone https://github.com/awarecorp/pinta-cc.git
+git clone https://github.com/pinta-ai/pinta-cc.git
 cd pinta-cc
 npm install && npm run build
 claude --plugin-dir .
