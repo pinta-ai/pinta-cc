@@ -1,10 +1,23 @@
-import crypto from "crypto";
 import fs from "fs";
 import os from "os";
 import path from "path";
 import type { BaseEvent } from "./types.js";
-import { redact, truncate } from "./redact.js";
-import type { GuardResult } from "./guard.js";
+import {
+  attrsFromRecord,
+  buildPayload,
+  mergeBatch,
+  snakeCase,
+  type AttrPolicy,
+  type GuardResult,
+  type OtlpAttribute,
+  type OtlpPayload,
+} from "@pinta-ai/core";
+
+// OTLP envelope + the redaction-aware attribute pipeline now live in
+// @pinta-ai/core. This module keeps only the cc-specific bits: event flattening,
+// resource attributes, CLI version resolution, and the redaction policy.
+export { mergeBatch };
+export type { OtlpPayload, OtlpAttribute };
 
 const PLUGIN_VERSION = "1.4.1"; // keep in sync with .claude-plugin/plugin.json
 
@@ -51,68 +64,6 @@ function resolveClaudeCodeVersion(): string | null {
   return null;
 }
 
-export interface OtlpAttribute {
-  key: string;
-  value:
-    | { stringValue: string }
-    | { intValue: number }
-    | { doubleValue: number }
-    | { boolValue: boolean };
-}
-
-export interface OtlpSpan {
-  traceId: string;
-  spanId: string;
-  name: string;
-  kind: number;
-  startTimeUnixNano: string;
-  endTimeUnixNano: string;
-  attributes: OtlpAttribute[];
-}
-
-export interface ResourceSpans {
-  resource: { attributes: OtlpAttribute[] };
-  scopeSpans: Array<{
-    scope: { name: string; version: string };
-    spans: OtlpSpan[];
-  }>;
-}
-
-export interface OtlpPayload {
-  resourceSpans: ResourceSpans[];
-}
-
-const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-
-/**
- * Convert a 26-char Crockford ULID into 32 lowercase hex chars (16 bytes)
- * suitable for an OTLP traceId. Decoding is straightforward because each
- * Crockford char carries 5 bits and 26 chars = 130 bits; we keep the low
- * 128 bits (the spec already pads timestamp+randomness into 128 bits).
- */
-export function ulidToTraceId(ulid: string): string {
-  if (ulid.length !== 26) {
-    throw new Error(`ulidToTraceId: expected 26 chars, got ${ulid.length}`);
-  }
-  // Decode to a BigInt then to 16-byte big-endian buffer.
-  let n = 0n;
-  for (const ch of ulid) {
-    const idx = CROCKFORD.indexOf(ch);
-    if (idx < 0) throw new Error(`ulidToTraceId: invalid Crockford char "${ch}"`);
-    n = (n << 5n) | BigInt(idx);
-  }
-  // Mask to 128 bits (drop the top 2 bits of the 130-bit decode).
-  const mask = (1n << 128n) - 1n;
-  n &= mask;
-  // Render as 32 hex chars, lowercase.
-  return n.toString(16).padStart(32, "0");
-}
-
-/** Generate a fresh 16-hex-char (8-byte) span ID. */
-export function newSpanId(): string {
-  return crypto.randomBytes(8).toString("hex");
-}
-
 /**
  * Attribute keys for which redaction (Tier 1) is skipped. Truncation (Tier 3)
  * still applies. These are identifiers, enums, or our own resource attrs that
@@ -128,50 +79,19 @@ const SKIP_REDACT_KEYS: ReadonlySet<string> = new Set([
   "cc.permission_mode",
 ]);
 
-function maybeRedactString(key: string, raw: string): string {
-  // Spec §3: truncate first, then redact.
-  const truncated = truncate(raw);
-  if (SKIP_REDACT_KEYS.has(key)) return truncated;
-  // Bash context only applies when this key may carry shell command text.
-  // flattenEvent emits cc.tool_input as a single JSON-stringified attribute
-  // (no nested flattening today), so strict equality matches actual behavior.
-  // If nested flattening is ever added, re-evaluate to avoid extending bash
-  // context to unrelated nested keys (e.g. cc.tool_input.file_path).
-  const context = key === "cc.tool_input" || key === "cc.tool_response"
-    ? ("bash" as const)
-    : undefined;
-  return redact(truncated, { context });
-}
+// flattenEvent emits cc.tool_input as a single JSON-stringified attribute (no
+// nested flattening today), so strict equality matches actual behavior. If
+// nested flattening is ever added, re-evaluate to avoid extending bash context
+// to unrelated nested keys (e.g. cc.tool_input.file_path).
+const BASH_CONTEXT_KEYS: ReadonlySet<string> = new Set([
+  "cc.tool_input",
+  "cc.tool_response",
+]);
 
-/** Convert a JS value into an OTLP attribute value. Returns null to omit. */
-function toOtlpValue(key: string, v: unknown): OtlpAttribute["value"] | null {
-  if (v === null || v === undefined) return null;
-  switch (typeof v) {
-    case "string":
-      return { stringValue: maybeRedactString(key, v) };
-    case "boolean":
-      return { boolValue: v };
-    case "number":
-      if (Number.isInteger(v)) return { intValue: v };
-      return { doubleValue: v };
-    case "object":
-      try {
-        return { stringValue: maybeRedactString(key, JSON.stringify(v)) };
-      } catch {
-        return { stringValue: maybeRedactString(key, String(v)) };
-      }
-    default:
-      return { stringValue: maybeRedactString(key, String(v)) };
-  }
-}
-
-function snakeCase(hookEventName: string): string {
-  // "PreToolUse" → "pre_tool_use"
-  return hookEventName
-    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
-    .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
-    .toLowerCase();
-}
+const ATTR_POLICY: AttrPolicy = {
+  skipRedactKeys: SKIP_REDACT_KEYS,
+  bashContextKeys: BASH_CONTEXT_KEYS,
+};
 
 function flattenEvent(event: BaseEvent): OtlpAttribute[] {
   const out: OtlpAttribute[] = [];
@@ -180,13 +100,12 @@ function flattenEvent(event: BaseEvent): OtlpAttribute[] {
   // Always set cc.hook explicitly so server queries have a canonical key
   // regardless of incoming field name.
   out.push({ key: "cc.hook", value: { stringValue: event.hook_event_name } });
+  const rest: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(event)) {
     if (k === "hook_event_name") continue; // covered by cc.hook above
-    const key = `cc.${k}`;
-    const value = toOtlpValue(key, v);
-    if (value === null) continue;
-    out.push({ key, value });
+    rest[k] = v;
   }
+  out.push(...attrsFromRecord(rest, "cc", ATTR_POLICY));
   return out;
 }
 
@@ -210,52 +129,13 @@ export function buildOtlpPayload(args: {
   now?: number; // ms since epoch; injectable for tests
   guard?: GuardResult | null;
 }): OtlpPayload {
-  const ts = args.now ?? Date.now();
-  const tsNano = (BigInt(ts) * 1_000_000n).toString();
-  const attrs = flattenEvent(args.event);
-  if (args.guard) {
-    attrs.push(
-      { key: 'pinta.guard.decision', value: { stringValue: args.guard.decision.toLowerCase() } },
-      { key: 'pinta.guard.duration_ms', value: { intValue: args.guard.durationMs } },
-    );
-    if (args.guard.reason) {
-      attrs.push({ key: 'pinta.guard.matched_rule', value: { stringValue: args.guard.reason } });
-    }
-    if (args.guard.failOpenReason) {
-      attrs.push({ key: 'pinta.guard.fail_open_reason', value: { stringValue: args.guard.failOpenReason } });
-    }
-  }
-  const span: OtlpSpan = {
-    traceId: ulidToTraceId(args.traceId),
-    spanId: newSpanId(),
-    name: `cc.${snakeCase(args.event.hook_event_name)}`,
-    kind: 1, // SPAN_KIND_INTERNAL
-    startTimeUnixNano: tsNano,
-    endTimeUnixNano: tsNano,
-    attributes: attrs,
-  };
-  return {
-    resourceSpans: [
-      {
-        resource: { attributes: resourceAttrs() },
-        scopeSpans: [
-          {
-            scope: { name: "pinta-cc", version: PLUGIN_VERSION },
-            spans: [span],
-          },
-        ],
-      },
-    ],
-  };
-}
-
-/**
- * Combine multiple per-hook payloads into a single OTLP payload by
- * concatenating their resourceSpans arrays. aware-backend's parser
- * iterates over resourceSpans natively.
- */
-export function mergeBatch(payloads: OtlpPayload[]): OtlpPayload {
-  const out: ResourceSpans[] = [];
-  for (const p of payloads) out.push(...p.resourceSpans);
-  return { resourceSpans: out };
+  return buildPayload({
+    traceId: args.traceId,
+    spanName: `cc.${snakeCase(args.event.hook_event_name)}`,
+    attributes: flattenEvent(args.event),
+    resource: resourceAttrs(),
+    scope: { name: "pinta-cc", version: PLUGIN_VERSION },
+    now: args.now,
+    guard: args.guard,
+  });
 }

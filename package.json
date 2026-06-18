@@ -29,6 +29,9 @@
     "mock-server": "npx tsx tools/mock-server.ts",
     "prepublishOnly": "npm run build"
   },
+  "dependencies": {
+    "@pinta-ai/core": "file:../pinta-core"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
