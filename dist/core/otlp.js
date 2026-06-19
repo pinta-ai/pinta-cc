@@ -3,13 +3,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.mergeBatch = void 0;
 exports.buildOtlpPayload = buildOtlpPayload;
 const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const core_1 = require("@pinta-ai/core");
-Object.defineProperty(exports, "mergeBatch", { enumerable: true, get: function () { return core_1.mergeBatch; } });
+// OTLP envelope + the redaction-aware attribute pipeline now live in
+// @pinta-ai/core. This module keeps only the cc-specific bits: event flattening,
+// resource attributes, CLI version resolution, and the redaction policy.
 const PLUGIN_VERSION = "1.4.1"; // keep in sync with .claude-plugin/plugin.json
 /**
  * Resolve the Claude Code CLI version by walking up from the binary path

@@ -5,7 +5,6 @@ import type { BaseEvent } from "./types.js";
 import {
   attrsFromRecord,
   buildPayload,
-  mergeBatch,
   snakeCase,
   type AttrPolicy,
   type GuardResult,
@@ -16,8 +15,6 @@ import {
 // OTLP envelope + the redaction-aware attribute pipeline now live in
 // @pinta-ai/core. This module keeps only the cc-specific bits: event flattening,
 // resource attributes, CLI version resolution, and the redaction policy.
-export { mergeBatch };
-export type { OtlpPayload, OtlpAttribute };
 
 const PLUGIN_VERSION = "1.4.1"; // keep in sync with .claude-plugin/plugin.json
 

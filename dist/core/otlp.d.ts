@@ -1,7 +1,5 @@
 import type { BaseEvent } from "./types.js";
-import { mergeBatch, type GuardResult, type OtlpAttribute, type OtlpPayload } from "@pinta-ai/core";
-export { mergeBatch };
-export type { OtlpPayload, OtlpAttribute };
+import { type GuardResult, type OtlpPayload } from "@pinta-ai/core";
 export declare function buildOtlpPayload(args: {
     event: BaseEvent;
     traceId: string;

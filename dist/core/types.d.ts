@@ -56,10 +56,3 @@ export declare function isSubagentEvent(event: BaseEvent): event is SubagentEven
 export declare function isStopEvent(event: BaseEvent): event is StopEvent;
 export declare function isPermissionEvent(event: BaseEvent): event is PermissionEvent;
 export declare function isSkippedHook(event: BaseEvent): boolean;
-export interface HookBlockOutput {
-    hookSpecificOutput: {
-        hookEventName: "PreToolUse";
-        permissionDecision: "deny";
-        permissionDecisionReason: string;
-    };
-}
