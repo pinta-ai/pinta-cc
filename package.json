@@ -22,20 +22,24 @@
   },
   "scripts": {
     "bump": "node scripts/bump.mjs",
-    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=cjs --target=node18 --minify --outfile=dist/index.js",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
     "mock-server": "npx tsx tools/mock-server.ts",
     "prepublishOnly": "npm run build"
   },
-  "dependencies": {
-    "@pinta-ai/core": "file:../pinta-core"
-  },
   "devDependencies": {
+    "@pinta-ai/core": "^0.2.0",
     "@types/node": "^22.0.0",
+    "esbuild": "^0.24.0",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0",
     "vitest": "^2.1.0"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
   }
 }
