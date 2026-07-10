@@ -23,13 +23,13 @@ the private registry.
    via the committed `.npmrc` + the `publish` workflow.
 
 ## Activate the @pinta-ai/core dependency (after core's first publish)
-`package.json` declares `@pinta-ai/core: ^0.2.0` (devDependency). Record its
+`package.json` declares `@pinta-ai/core: ^0.3.0` (devDependency). Record its
 GitHub Packages resolution into `package-lock.json` once — point this single
 install at GitHub Packages (the committed `.npmrc` has no scope redirect):
 
 ```sh
 export NODE_AUTH_TOKEN=<github PAT with read:packages>
-npm install @pinta-ai/core@^0.2.0 --save-dev --registry=https://npm.pkg.github.com
+npm install @pinta-ai/core@^0.3.0 --save-dev --registry=https://npm.pkg.github.com
 git add package.json package-lock.json
 git commit -m "chore: lock @pinta-ai/core from GitHub Packages"
 ```
