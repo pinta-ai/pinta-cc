@@ -1,18 +1,11 @@
 import type { PintaConfig } from "../core/config.js";
 import type { StopEvent } from "../core/types.js";
-import { Transport } from "../core/transport.js";
-import { TraceManager } from "../core/trace.js";
-import { buildOtlpPayload } from "../core/otlp.js";
+import { emitEvent } from "./shared.js";
 
 export async function handleStop(
   event: StopEvent,
   config: PintaConfig,
 ): Promise<number> {
-  const transport = new Transport(config);
-  await transport.flush();
-
-  const traceId = new TraceManager(config).currentTrace();
-  const payload = buildOtlpPayload({ event, traceId });
-  await transport.send(payload);
+  await emitEvent(event, config);
   return 0;
 }

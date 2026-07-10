@@ -102,13 +102,3 @@ const SKIP_HOOKS = new Set(["Notification", "TaskCreated", "TaskCompleted"]);
 export function isSkippedHook(event: BaseEvent): boolean {
   return SKIP_HOOKS.has(event.hook_event_name);
 }
-
-// --- Hook output types ---
-
-export interface HookBlockOutput {
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse";
-    permissionDecision: "deny";
-    permissionDecisionReason: string;
-  };
-}
