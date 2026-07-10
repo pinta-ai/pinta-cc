@@ -2,6 +2,29 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.5.1] - 2026-07-10
+
+### Changed
+
+- `@pinta-ai/core` bumped `^0.2.0` → `^0.3.0` (devDependency, bundled into
+  `dist/` at build). The upgrade is additive; no adaptor source change was
+  needed.
+
+### Added
+
+- `pinta.client.rtt_ms` / `pinta.client.op` span attributes on PreToolUse
+  spans. `buildOtlpPayload` already forwards its `guard` result into core's
+  `buildPayload`, and core `0.3.0` derives the client-call timing from the
+  `GuardResult.clientRttMs` it now measures. The manager can only time its own
+  handler, so `clientRttMs - durationMs` gives it the transport overhead.
+
+### Fixed
+
+- `tests/core/guard.test.ts` asserted the core `0.2.0` `GuardResult` shape with
+  an exhaustive `toEqual` and broke once `clientRttMs` was added. It now matches
+  that field by type, since it is a measured wall-clock rather than a value
+  echoed from the response body.
+
 ## [1.3.2] - 2026-06-12
 
 ### Changed

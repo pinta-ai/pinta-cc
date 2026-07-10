@@ -25,11 +25,14 @@ describe('evaluateGuard', () => {
       { spanId: 's', toolName: 'Bash', toolInput: 'echo $AWS' },
       'http://127.0.0.1:5147/guard/evaluate',
     );
+    // `clientRttMs` (core >=0.3.0) is this client's wall-clock for the call, so
+    // it is measured, not echoed from the response body — match it by type.
     expect(r).toEqual<GuardResult>({
       decision: 'DENY',
       reason: 'deny_credentials',
       userMessage: '⛔ Blocked by Pinta AI — deny_credentials',
       durationMs: 8,
+      clientRttMs: expect.any(Number),
     });
   });
 
