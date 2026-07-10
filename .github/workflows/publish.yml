@@ -12,21 +12,24 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
-    env:
-      NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+          registry-url: https://registry.npmjs.org
 
       # Pinned: npm@latest (12.x) requires node >=22.22, but this job runs node 20.
       # 11.18.0 supports node ^20.17.0 and still does OIDC trusted publishing.
       - run: npm install -g npm@11.18.0
 
+      # NODE_AUTH_TOKEN is scoped to this step only: it authenticates the
+      # GitHub Packages fetch of @pinta-ai/core. Leaking it into the publish
+      # step would make npm send it to npmjs instead of using OIDC.
       - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - run: npm run build
 
