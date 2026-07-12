@@ -5,72 +5,14 @@
 import { loadEnvFile } from "./env-file.js";
 loadEnvFile();
 
-import { bridgeUserConfigToOtelEnv } from "./core/env-bridge.js";
-import { loadConfig } from "./core/config.js";
-import {
-  isPreToolUseEvent,
-  isPostToolUseEvent,
-  isUserPromptSubmitEvent,
-  isSessionEvent,
-  isSubagentEvent,
-  isStopEvent,
-  isPermissionEvent,
-  isSkippedHook,
-} from "./core/types.js";
-import type { BaseEvent } from "./core/types.js";
-import { handlePreToolUse } from "./handlers/pre-tool-use.js";
-import { handlePostToolUse } from "./handlers/post-tool-use.js";
-import { handleUserPrompt } from "./handlers/user-prompt.js";
-import { handleSession } from "./handlers/session.js";
-import { handleSubagent } from "./handlers/subagent.js";
-import { handleStop } from "./handlers/stop.js";
-import { handlePermission } from "./handlers/permission.js";
-import { handleDefault } from "./handlers/default.js";
-
-async function readStdin(): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of process.stdin) {
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks).toString("utf-8");
-}
+// CJS hook entry (built to dist/index.js) — always direct-exec, unguarded,
+// exactly as before A3. Dispatch logic itself lives in ./hook.js, shared
+// with the ESM entry (src/index.mts -> dist/index.mjs) so the two build
+// targets cannot drift. See src/index.mts for the ESM/dual-entry variant.
+import { runHook } from "./hook.js";
 
 async function main(): Promise<void> {
-  // Bridge CLAUDE_PLUGIN_OPTION_* → OTEL_EXPORTER_OTLP_* FIRST before any other logic.
-  // Explicit OTel env vars take precedence over the bridge.
-  bridgeUserConfigToOtelEnv();
-
-  let exitCode = 0;
-
-  try {
-    const config = loadConfig();
-    const raw = await readStdin();
-    const event: BaseEvent = JSON.parse(raw);
-
-    if (isSkippedHook(event)) {
-      exitCode = await handleDefault(event);
-    } else if (isPreToolUseEvent(event)) {
-      exitCode = await handlePreToolUse(event, config);
-    } else if (isPostToolUseEvent(event)) {
-      exitCode = await handlePostToolUse(event, config);
-    } else if (isUserPromptSubmitEvent(event)) {
-      exitCode = await handleUserPrompt(event, config);
-    } else if (isSessionEvent(event)) {
-      exitCode = await handleSession(event, config);
-    } else if (isSubagentEvent(event)) {
-      exitCode = await handleSubagent(event, config);
-    } else if (isStopEvent(event)) {
-      exitCode = await handleStop(event, config);
-    } else if (isPermissionEvent(event)) {
-      exitCode = await handlePermission(event, config);
-    } else {
-      exitCode = await handleDefault(event);
-    }
-  } catch (err) {
-    process.stderr.write(`[pinta-cc] error: ${err}\n`);
-    exitCode = 0; // top-level catch-all stays fail-open per spec §6
-  }
-
+  const exitCode = await runHook();
   process.exit(exitCode);
 }
 
