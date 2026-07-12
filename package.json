@@ -1,6 +1,6 @@
 {
   "name": "@pinta-ai/pinta-cc",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "description": "Generic OTLP forwarder for Claude Code hook events",
   "main": "dist/index.js",
   "exports": {
