@@ -3,6 +3,12 @@
   "version": "1.5.1",
   "description": "Generic OTLP forwarder for Claude Code hook events",
   "main": "dist/index.js",
+  "exports": {
+    ".": {
+      "import": "./dist/index.mjs",
+      "require": "./dist/index.js"
+    }
+  },
   "license": "PolyForm-Noncommercial-1.0.0",
   "files": [
     "dist",
@@ -23,10 +29,13 @@
   "scripts": {
     "bump": "node scripts/bump.mjs",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && esbuild src/index.ts --bundle --platform=node --format=cjs --target=node18 --minify --outfile=dist/index.js",
+    "build": "tsc --noEmit && npm run build:cjs && npm run build:esm",
+    "build:cjs": "esbuild src/index.ts --bundle --platform=node --format=cjs --target=node18 --minify --outfile=dist/index.js",
+    "build:esm": "esbuild src/index.mts --bundle --platform=node --format=esm --target=node18 --minify --banner:js=\"import{createRequire as __pintaCreateRequire}from 'node:module';const require=__pintaCreateRequire(import.meta.url);\" --outfile=dist/index.mjs",
     "dev": "tsc --watch",
     "test": "vitest run",
     "test:watch": "vitest",
+    "smoke:import": "node scripts/smoke-import.mjs",
     "mock-server": "npx tsx tools/mock-server.ts",
     "prepublishOnly": "npm run build"
   },
