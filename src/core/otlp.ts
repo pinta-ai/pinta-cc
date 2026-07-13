@@ -16,6 +16,25 @@ import {
 // @pinta-ai/core. This module keeps only the cc-specific bits: event flattening,
 // resource attributes, CLI version resolution, and the redaction policy.
 
+// os.userInfo() THROWS when the running uid has no passwd entry (containers with
+// arbitrary uid, CI, service/launchd accounts). resourceAttrs() runs on every
+// span build, so an unguarded call there means total telemetry loss in those
+// environments. Guard + memoize: identical value in the normal case, never throws.
+let cachedProcessOwner: string | undefined;
+function processOwner(): string {
+  if (cachedProcessOwner === undefined) {
+    try {
+      cachedProcessOwner = os.userInfo().username;
+    } catch {
+      cachedProcessOwner =
+        process.env.USER ??
+        process.env.LOGNAME ??
+        (typeof process.getuid === "function" ? String(process.getuid()) : "unknown");
+    }
+  }
+  return cachedProcessOwner;
+}
+
 const PLUGIN_VERSION = "1.6.0"; // keep in sync with .claude-plugin/plugin.json
 
 /**
@@ -114,7 +133,7 @@ function resourceAttrs(): OtlpAttribute[] {
     { key: "telemetry.sdk.language", value: { stringValue: "nodejs" } },
     { key: "telemetry.sdk.version", value: { stringValue: PLUGIN_VERSION } },
     { key: "process.pid", value: { intValue: process.pid } },
-    { key: "process.owner", value: { stringValue: os.userInfo().username } },
+    { key: "process.owner", value: { stringValue: processOwner() } },
     { key: "host.name", value: { stringValue: os.hostname() } },
     { key: "host.arch", value: { stringValue: os.arch() } },
   ];
