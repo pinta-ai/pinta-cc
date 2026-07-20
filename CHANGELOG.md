@@ -6,7 +6,7 @@ All notable changes to pinta-cc are documented here.
 
 ### Changed
 
-- `@pinta-ai/core` bumped `^0.3.0` → `^0.4.1` (devDependency, bundled
+- `@pinta-ai/core` bumped `^0.3.0` → `^0.5.0` (devDependency, bundled
   into `dist/` at build). Pulls in the oversized-flush fix (pinta-manager#180
   follow-up): the retry queue now flushes in 900 KiB chunks instead of one
   unbounded POST, spans are capped at 800 KiB at build time, and a payload
