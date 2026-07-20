@@ -16,7 +16,7 @@ import {
 // @pinta-ai/core. This module keeps only the cc-specific bits: event flattening,
 // resource attributes, CLI version resolution, and the redaction policy.
 
-const PLUGIN_VERSION = "1.6.0"; // keep in sync with .claude-plugin/plugin.json
+const PLUGIN_VERSION = "1.6.1"; // keep in sync with .claude-plugin/plugin.json
 
 /**
  * Resolve the Claude Code CLI version by walking up from the binary path
