@@ -25,8 +25,9 @@ loadEnvFile();
 
 import { runHook } from "./hook.js";
 import { lifecycle } from "./lifecycle/scanner.js";
+import { enroll } from "./enroll/index.js";
 
-export { lifecycle };
+export { lifecycle, enroll };
 
 function isDirectlyExecuted(): boolean {
   const entry = process.argv[1];
