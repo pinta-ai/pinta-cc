@@ -6,7 +6,6 @@ import {
   buildPayload,
   snakeCase,
   type AttrPolicy,
-  type GuardResult,
   type OtlpAttribute,
   type OtlpPayload,
 } from "@pinta-ai/core";
@@ -34,7 +33,7 @@ function processOwner(): string {
   return cachedProcessOwner;
 }
 
-const PLUGIN_VERSION = "1.7.1"; // keep in sync with .claude-plugin/plugin.json
+const PLUGIN_VERSION = "1.8.0"; // keep in sync with .claude-plugin/plugin.json
 
 /**
  * Attribute keys for which redaction (Tier 1) is skipped. Truncation (Tier 3)
@@ -95,11 +94,15 @@ function resourceAttrs(versionCacheDir?: string): OtlpAttribute[] {
   ];
 }
 
+/**
+ * The span for one hook event. Carries no `pinta.guard.*` attributes: the guard
+ * is asked about this payload and its verdict is attached afterwards with
+ * core's `attachGuard`, so the judged span and the sent span are one object.
+ */
 export function buildOtlpPayload(args: {
   event: BaseEvent;
   traceId: string; // ULID (26 chars)
   now?: number; // ms since epoch; injectable for tests
-  guard?: GuardResult | null;
   versionCacheDir?: string;
 }): OtlpPayload {
   return buildPayload({
@@ -109,6 +112,5 @@ export function buildOtlpPayload(args: {
     resource: resourceAttrs(args.versionCacheDir),
     scope: { name: "pinta-cc", version: PLUGIN_VERSION },
     now: args.now,
-    guard: args.guard,
   });
 }

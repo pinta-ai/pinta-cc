@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { buildPayload, type OtlpPayload } from "@pinta-ai/core";
 
 // The handler mocks isolate the security-relevant ordering: guard decision vs.
 // telemetry emission. Neither mock touches @pinta-ai/core, so this suite runs
@@ -7,12 +8,13 @@ vi.mock("../../src/core/guard.js", () => ({
   evaluateGuard: vi.fn(),
 }));
 vi.mock("../../src/handlers/shared.js", () => ({
-  emitEvent: vi.fn(),
+  buildEventPayload: vi.fn(),
+  sendPayload: vi.fn(),
 }));
 
 import { handlePreToolUse } from "../../src/handlers/pre-tool-use.js";
 import { evaluateGuard } from "../../src/core/guard.js";
-import { emitEvent } from "../../src/handlers/shared.js";
+import { buildEventPayload, sendPayload } from "../../src/handlers/shared.js";
 import type { PreToolUseEvent } from "../../src/core/types.js";
 import type { PintaConfig } from "../../src/core/config.js";
 
@@ -29,6 +31,17 @@ const event: PreToolUseEvent = {
   tool_input: { command: "cat ~/.aws/credentials" },
 } as PreToolUseEvent;
 
+/** A real single-span payload, as `buildEventPayload` would produce. */
+function freshPayload(): OtlpPayload {
+  return buildPayload({
+    traceId: "01HQXM7Y9YZJ8MK7Z6P3X1V8R0",
+    spanName: "cc.pre_tool_use",
+    attributes: [{ key: "cc.tool_name", value: { stringValue: "Bash" } }],
+    resource: [],
+    scope: { name: "pinta-cc", version: "0.0.0" },
+  });
+}
+
 describe("handlePreToolUse — security decision vs. telemetry ordering", () => {
   let writeSpy: ReturnType<typeof vi.spyOn>;
   let writes: string[];
@@ -41,8 +54,10 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
         writes.push(String(chunk));
         return true;
       });
-    vi.mocked(emitEvent).mockReset();
+    vi.mocked(sendPayload).mockReset();
     vi.mocked(evaluateGuard).mockReset();
+    vi.mocked(buildEventPayload).mockReset();
+    vi.mocked(buildEventPayload).mockImplementation(() => freshPayload());
   });
 
   afterEach(() => {
@@ -57,7 +72,7 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
       durationMs: 8,
     } as any);
     // Telemetry blows up (disk write error, os.userInfo throwing, etc.).
-    vi.mocked(emitEvent).mockRejectedValue(new Error("disk exploded"));
+    vi.mocked(sendPayload).mockRejectedValue(new Error("disk exploded"));
 
     const code = await handlePreToolUse(event, config);
 
@@ -83,7 +98,7 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
       if (String(chunk).includes("permissionDecision")) order.push("stdout");
       return true;
     });
-    vi.mocked(emitEvent).mockImplementation(async () => {
+    vi.mocked(sendPayload).mockImplementation(async () => {
       order.push("emit");
     });
 
@@ -94,44 +109,60 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
 
   it("ALLOW: no permission JSON, exit 0, telemetry still emitted", async () => {
     vi.mocked(evaluateGuard).mockResolvedValue(null);
-    vi.mocked(emitEvent).mockResolvedValue(undefined);
+    vi.mocked(sendPayload).mockResolvedValue(undefined);
 
     const code = await handlePreToolUse(event, config);
 
     expect(code).toBe(0);
     expect(writes.some((w) => w.includes("permissionDecision"))).toBe(false);
-    expect(vi.mocked(emitEvent)).toHaveBeenCalledOnce();
+    expect(vi.mocked(sendPayload)).toHaveBeenCalledOnce();
   });
 });
 
 /**
- * The hook payload carries more than the guard was being told.
+ * One span, two readers.
  *
- * `cwd` locates a relative target — `rm -rf passwd` reads as routine work
- * until you know it was issued from /etc — and `hook_event_name` is what lets
- * the manager trust `tool_name` at all, since Claude Code owns those names and
- * an MCP server does not. Both were on `event` and neither was forwarded, so
- * the guard judged with less than the adapter knew (PTA-176 · PTA-207).
+ * The guard used to be told a hand-picked summary of the event beside the span
+ * that carried the same facts — and the summary drifted (`cwd`, the hook name:
+ * PTA-176 · PTA-207). Now the guard is asked about the payload itself, and the
+ * verdict is attached to that same object before it is sent, so the span the
+ * manager judged is the span the backend stores, `spanId` included.
  */
-describe("handlePreToolUse — what the guard is told about the invocation", () => {
+describe("handlePreToolUse — the guard is asked about the span that is then sent", () => {
   beforeEach(() => {
-    vi.mocked(emitEvent).mockReset();
+    vi.mocked(sendPayload).mockReset();
     vi.mocked(evaluateGuard).mockReset();
-    vi.mocked(evaluateGuard).mockResolvedValue({
-      decision: "ALLOW",
-      reason: null,
-      userMessage: null,
-    } as never);
+    vi.mocked(buildEventPayload).mockReset();
+    vi.mocked(buildEventPayload).mockImplementation(() => freshPayload());
   });
 
-  it("forwards the working directory and the hook event", async () => {
-    await handlePreToolUse(
-      { ...event, cwd: "/etc" } as PreToolUseEvent,
-      config,
-    );
-    expect(vi.mocked(evaluateGuard).mock.calls[0]?.[0]).toMatchObject({
-      cwd: "/etc",
-      method: "PreToolUse",
-    });
+  it("builds the payload first, from the event, and hands that object to the guard", async () => {
+    vi.mocked(evaluateGuard).mockResolvedValue(null);
+    await handlePreToolUse({ ...event, cwd: "/etc" } as PreToolUseEvent, config);
+    expect(vi.mocked(buildEventPayload).mock.calls[0]?.[0]).toMatchObject({ cwd: "/etc", hook_event_name: "PreToolUse" });
+    const built = vi.mocked(buildEventPayload).mock.results[0]?.value;
+    expect(vi.mocked(evaluateGuard).mock.calls[0]?.[0]).toBe(built);
+    expect(vi.mocked(sendPayload).mock.calls[0]?.[0]).toBe(built);
+  });
+
+  it("sends the judged span with the verdict attached, same spanId", async () => {
+    vi.mocked(evaluateGuard).mockResolvedValue({
+      decision: "DENY",
+      reason: "deny_credentials",
+      userMessage: null,
+      durationMs: 8,
+      clientRttMs: 12,
+    } as any);
+    vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+    await handlePreToolUse(event, config);
+    const judged = vi.mocked(evaluateGuard).mock.calls[0]?.[0] as OtlpPayload;
+    const sent = vi.mocked(sendPayload).mock.calls[0]?.[0] as OtlpPayload;
+    expect(sent).toBe(judged);
+    const span = sent.resourceSpans[0].scopeSpans[0].spans[0];
+    const attrs = Object.fromEntries(span.attributes.map((a) => [a.key, a.value]));
+    expect(attrs["pinta.guard.decision"]).toEqual({ stringValue: "deny" });
+    expect(attrs["pinta.guard.matched_rule"]).toEqual({ stringValue: "deny_credentials" });
+    expect(attrs["pinta.client.rtt_ms"]).toEqual({ intValue: 12 });
+    vi.restoreAllMocks();
   });
 });

@@ -1,3 +1,4 @@
+import { attachGuard } from '@pinta-ai/core';
 import { describe, it, expect, vi } from 'vitest';
 import packageJson from '../../package.json';
 import { buildOtlpPayload } from '../../src/core/otlp';
@@ -72,7 +73,7 @@ describe('buildOtlpPayload (v1.2.0 — generic)', () => {
     expect(getClaudeCodeVersion).toHaveBeenCalledWith('/tmp/version-cache');
   });
 
-  it('emits pinta.guard.* attributes when guard result is provided', () => {
+  it('carries no pinta.guard.* itself; the verdict is attached to the same span afterwards', () => {
     const payload = buildOtlpPayload({
       event: {
         hook_event_name: 'PreToolUse',
@@ -84,9 +85,11 @@ describe('buildOtlpPayload (v1.2.0 — generic)', () => {
         tool_use_id: 'u1',
       } as any,
       traceId: '01HQXM7Y9YZJ8MK7Z6P3X1V8R0',
-      guard: { decision: 'DENY', reason: 'deny_credentials', userMessage: '⛔ Blocked by Pinta AI — deny_credentials', durationMs: 8 },
     });
     const span = payload.resourceSpans[0].scopeSpans[0].spans[0];
+    expect(span.attributes.some((a: any) => a.key.startsWith('pinta.guard.'))).toBe(false);
+    // The guard is asked about this payload; its answer lands on this object.
+    attachGuard(payload, { decision: 'DENY', reason: 'deny_credentials', userMessage: '⛔ Blocked by Pinta AI — deny_credentials', durationMs: 8 });
     const decision = span.attributes.find((a: any) => a.key === 'pinta.guard.decision');
     const rule = span.attributes.find((a: any) => a.key === 'pinta.guard.matched_rule');
     const dur = span.attributes.find((a: any) => a.key === 'pinta.guard.duration_ms');
