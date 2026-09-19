@@ -2,6 +2,21 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.7.1] - 2026-09-19
+
+### Fixed
+
+- Collect the Claude Code product version from native installations, npm
+  symlinks, pnpm launchers, and Windows npm shims. Resolve the actual executable
+  before package lookup; use a bounded, shell-free `--version` probe when
+  package metadata is unavailable. Fall back to PATH and the standard native
+  installation directory only when `CLAUDE_CODE_EXECPATH` is absent.
+- Share native version results across hook processes with an update-sensitive,
+  bounded cache and short retries for failed probes. Preserve `unknown` with a
+  stderr diagnostic on failure; never substitute the Pinta or Node version.
+- Skip version probes when telemetry is disabled, and run regression tests in
+  PR validation.
+
 ## [1.6.1] - 2026-07-20
 
 ### Changed

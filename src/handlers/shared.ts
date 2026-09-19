@@ -1,4 +1,4 @@
-import type { PintaConfig } from "../core/config.js";
+import { hasOtlpEndpoint, type PintaConfig } from "../core/config.js";
 import type { BaseEvent } from "../core/types.js";
 import type { GuardResult } from "../core/guard.js";
 import { Transport } from "../core/transport.js";
@@ -23,11 +23,17 @@ export async function emitEvent(
   config: PintaConfig,
   opts: { traceMode?: "current" | "new"; guard?: GuardResult | null } = {},
 ): Promise<void> {
+  if (!hasOtlpEndpoint()) return;
   const transport = new Transport(config);
   await transport.flush();
 
   const traces = new TraceManager(config);
   const traceId = opts.traceMode === "new" ? traces.newTrace() : traces.currentTrace();
-  const payload = buildOtlpPayload({ event, traceId, guard: opts.guard });
+  const payload = buildOtlpPayload({
+    event,
+    traceId,
+    guard: opts.guard,
+    versionCacheDir: config.pluginData,
+  });
   await transport.send(payload);
 }

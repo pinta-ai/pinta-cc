@@ -98,6 +98,30 @@ The plugin reads OTel env vars directly. `CLAUDE_PLUGIN_OPTION_*` env vars (set 
 
 Note: `member.identity.*` attributes are **not** attached at plugin time (moved to relay layer).
 
+#### Claude Code version discovery
+
+`service.version` is the **Claude Code product version**, not the Pinta plugin
+version. The hook prefers `CLAUDE_CODE_EXECPATH`, resolves symlinks, and reads
+Claude's npm package metadata when available. For native installations it runs
+that executable with `--version` (no shell, 2-second timeout, bounded output) and
+accepts only output identifying Claude Code. Without `CLAUDE_CODE_EXECPATH`, it
+searches absolute PATH entries, then `~/.local/bin/claude`. An invalid explicit
+path never silently selects a different installed CLI.
+
+Native probe results are cached in `claude-version.json` under
+`CLAUDE_PLUGIN_DATA` (default: `${CLAUDE_PLUGIN_ROOT}/.plugin-data`), shared by
+separate hook processes. The cache holds at most eight executables and
+invalidates on resolved path or file metadata changes. Successful results
+expire after 24 hours; failed probes retry after 30 seconds. A cache write
+failure does not discard a discovered version.
+
+If discovery fails, the hook sends `unknown` and writes a `[pinta-cc] CLI version:`
+diagnostic to stderr without copying child output. Audit Log displays this as
+an empty Version, rather than presenting a fabricated version. Check the hook's
+executable path and cache directory permissions when troubleshooting. Old
+records with missing versions are not backfilled. Version probes are skipped
+when telemetry is disabled.
+
 ### Span attributes
 
 | Attribute | Value |
@@ -159,10 +183,25 @@ Notification, TaskCreated, TaskCompleted
 npm install
 npm run build         # tsc → dist/
 npm test              # vitest run
+npm run smoke:version # built CJS/ESM hooks -> local collector (after build)
 npm run mock-server   # Generic OTLP collector at http://localhost:3000
 ```
 
 ### Local integration test
+
+`smoke:version` uses isolated plugin data and a loopback collector, not your real
+configuration. On macOS/Linux it supplies an executable fixture by default.
+To check a real native installation (required on Windows), run after building:
+
+```bash
+PINTA_TEST_CLAUDE_BINARY=/absolute/path/to/claude \
+PINTA_TEST_CLAUDE_VERSION=2.1.278 \
+npm run smoke:version
+```
+
+Set the expected version to the actual product version of that binary. The test
+launches both built hook entrypoints with stdin payloads and inspects the
+serialized resource attributes received over HTTP.
 
 ```bash
 # Terminal 1: start the mock OTLP collector

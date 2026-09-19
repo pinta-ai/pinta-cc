@@ -1,4 +1,5 @@
 import path from "path";
+import { envOptionsResolver } from "@pinta-ai/core";
 
 /**
  * Plugin config — ONLY the bits we actually use after v1.2.
@@ -24,5 +25,5 @@ export function loadConfig(): PintaConfig {
 
 /** Returns true if OTel endpoint is configured (signal to silently disable telemetry). */
 export function hasOtlpEndpoint(): boolean {
-  return Boolean(process.env.OTEL_EXPORTER_OTLP_ENDPOINT);
+  return envOptionsResolver() !== null;
 }

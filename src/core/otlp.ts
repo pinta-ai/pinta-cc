@@ -1,7 +1,6 @@
-import fs from "fs";
 import os from "os";
-import path from "path";
 import type { BaseEvent } from "./types.js";
+import { getClaudeCodeVersion } from "./claude-version.js";
 import {
   attrsFromRecord,
   buildPayload,
@@ -35,50 +34,7 @@ function processOwner(): string {
   return cachedProcessOwner;
 }
 
-const PLUGIN_VERSION = "1.7.0"; // keep in sync with .claude-plugin/plugin.json
-
-/**
- * Resolve the Claude Code CLI version by walking up from the binary path
- * (CLAUDE_CODE_EXECPATH) until we find the `@anthropic-ai/claude-code`
- * package.json. Different install layouts (npm global, pnpm, bundled) put
- * the binary at different depths, so we can't hard-code "..".
- *
- * Cached at module scope — one read per hook process.
- * Falls back to "unknown" on any failure so a missing CLI never fails the hook.
- */
-let cachedCliVersion: string | null = null;
-function getClaudeCodeVersion(): string {
-  if (cachedCliVersion !== null) return cachedCliVersion;
-  cachedCliVersion = resolveClaudeCodeVersion() ?? "unknown";
-  return cachedCliVersion;
-}
-
-const MAX_WALK_DEPTH = 6;
-
-function resolveClaudeCodeVersion(): string | null {
-  const execPath = process.env.CLAUDE_CODE_EXECPATH;
-  if (!execPath) return null;
-  let dir = path.dirname(execPath);
-  const root = path.parse(dir).root;
-  for (let i = 0; i < MAX_WALK_DEPTH && dir !== root; i++) {
-    const pkgPath = path.join(dir, "package.json");
-    try {
-      const raw = fs.readFileSync(pkgPath, "utf-8");
-      const parsed = JSON.parse(raw) as { name?: unknown; version?: unknown };
-      if (
-        typeof parsed.name === "string" &&
-        parsed.name.startsWith("@anthropic-ai/claude-code") &&
-        typeof parsed.version === "string"
-      ) {
-        return parsed.version;
-      }
-    } catch {
-      // keep walking
-    }
-    dir = path.dirname(dir);
-  }
-  return null;
-}
+const PLUGIN_VERSION = "1.7.1"; // keep in sync with .claude-plugin/plugin.json
 
 /**
  * Attribute keys for which redaction (Tier 1) is skipped. Truncation (Tier 3)
@@ -125,10 +81,10 @@ function flattenEvent(event: BaseEvent): OtlpAttribute[] {
   return out;
 }
 
-function resourceAttrs(): OtlpAttribute[] {
+function resourceAttrs(versionCacheDir?: string): OtlpAttribute[] {
   return [
     { key: "service.name", value: { stringValue: "claude-code" } },
-    { key: "service.version", value: { stringValue: getClaudeCodeVersion() } },
+    { key: "service.version", value: { stringValue: getClaudeCodeVersion(versionCacheDir) } },
     { key: "telemetry.sdk.name", value: { stringValue: "pinta-cc" } },
     { key: "telemetry.sdk.language", value: { stringValue: "nodejs" } },
     { key: "telemetry.sdk.version", value: { stringValue: PLUGIN_VERSION } },
@@ -144,12 +100,13 @@ export function buildOtlpPayload(args: {
   traceId: string; // ULID (26 chars)
   now?: number; // ms since epoch; injectable for tests
   guard?: GuardResult | null;
+  versionCacheDir?: string;
 }): OtlpPayload {
   return buildPayload({
     traceId: args.traceId,
     spanName: `cc.${snakeCase(args.event.hook_event_name)}`,
     attributes: flattenEvent(args.event),
-    resource: resourceAttrs(),
+    resource: resourceAttrs(args.versionCacheDir),
     scope: { name: "pinta-cc", version: PLUGIN_VERSION },
     now: args.now,
     guard: args.guard,
