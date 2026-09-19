@@ -1,5 +1,11 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
+import packageJson from '../../package.json';
 import { buildOtlpPayload } from '../../src/core/otlp';
+import { getClaudeCodeVersion } from '../../src/core/claude-version.js';
+
+vi.mock('../../src/core/claude-version.js', () => ({
+  getClaudeCodeVersion: vi.fn(() => '2.3.4'),
+}));
 
 describe('buildOtlpPayload (v1.2.0 — generic)', () => {
   it('produces resourceSpans with one span per call', () => {
@@ -48,9 +54,22 @@ describe('buildOtlpPayload (v1.2.0 — generic)', () => {
       event: { hook_event_name: 'SessionStart', session_id: 's', transcript_path: '/t', cwd: '/t' } as any,
       traceId: '01HQXM7Y9YZJ8MK7Z6P3X1V8R0',
     });
+
     const resourceAttrs = payload.resourceSpans[0].resource.attributes;
     const sn = resourceAttrs.find((a: any) => a.key === 'service.name');
     expect((sn?.value as any)?.stringValue).toBe('claude-code');
+  });
+
+  it('keeps the Claude product version separate from the Pinta SDK version', () => {
+    const payload = buildOtlpPayload({
+      event: { hook_event_name: 'SessionStart', session_id: 's', transcript_path: '/t', cwd: '/t' },
+      traceId: '01HQXM7Y9YZJ8MK7Z6P3X1V8R0',
+      versionCacheDir: '/tmp/version-cache',
+    });
+    const attrs = payload.resourceSpans[0].resource.attributes;
+    expect(attrs.find((attr) => attr.key === 'service.version')?.value).toEqual({ stringValue: '2.3.4' });
+    expect(attrs.find((attr) => attr.key === 'telemetry.sdk.version')?.value).toEqual({ stringValue: packageJson.version });
+    expect(getClaudeCodeVersion).toHaveBeenCalledWith('/tmp/version-cache');
   });
 
   it('emits pinta.guard.* attributes when guard result is provided', () => {
