@@ -1,36 +1,22 @@
+import { attachGuard } from "@pinta-ai/core";
 import type { PintaConfig } from "../core/config.js";
 import type { PreToolUseEvent } from "../core/types.js";
 import { evaluateGuard } from "../core/guard.js";
-import { emitEvent } from "./shared.js";
+import { buildEventPayload, sendPayload } from "./shared.js";
 
 export async function handlePreToolUse(
   event: PreToolUseEvent,
   config: PintaConfig,
 ): Promise<number> {
-  const rawToolInput =
-    typeof event.tool_input === "string"
-      ? event.tool_input
-      : JSON.stringify(event.tool_input);
-  // `cwd` and `hook_event_name` are on every hook payload and were being
-  // dropped here. Both change what the guard can conclude:
-  //
-  // - `cwd` locates a relative target. `rm -rf passwd` reads as routine work
-  //   until you know it was issued from /etc (PTA-176).
-  // - `hook_event_name` is what lets the manager trust `tool_name`. Claude Code
-  //   owns these names; an MCP server does not, so without the event a tool
-  //   called `Read` is taken at its word and its arguments are treated as
-  //   content rather than as a command (PTA-207).
-  const guard = await evaluateGuard(
-    {
-      spanId: event.session_id ?? "unknown",
-      toolName: event.tool_name,
-      method: event.hook_event_name,
-      cwd: event.cwd,
-      toolInput: event.tool_input,
-      rawTextFields: { toolInput: rawToolInput },
-    },
-    process.env.PINTA_GUARD_ENDPOINT,
-  );
+  // The span is built BEFORE the guard is asked, and the guard is asked about
+  // that span. Until core 0.8.0 the guard got a hand-picked summary of the
+  // event (tool name, input, cwd, hook) beside the span that carried the same
+  // facts under `cc.*` — two readings of one payload, free to drift, and they
+  // did (PTA-176, PTA-207: `cwd` and the hook name were on the span and not in
+  // the summary). Now there is one reading; the manager projects it through
+  // the same AgentEvent assembly the backend uses to store it.
+  const payload = buildEventPayload(event, config);
+  const guard = await evaluateGuard(payload, process.env.PINTA_GUARD_ENDPOINT);
 
   // SECURITY: enforce the guard decision BEFORE telemetry. A DENY must be
   // written to stdout first so a later telemetry failure can never bubble to
@@ -52,8 +38,10 @@ export async function handlePreToolUse(
 
   // Telemetry is best-effort: its failure must never override the already
   // written security decision (or flip an ALLOW into a fail-open error path).
+  // The verdict rides on the same span the guard judged, same spanId.
   try {
-    await emitEvent(event, config, { guard });
+    attachGuard(payload, guard);
+    await sendPayload(payload, config);
   } catch (err) {
     process.stderr.write(`[pinta-cc] telemetry emit failed: ${err}\n`);
   }
