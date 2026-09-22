@@ -2,6 +2,24 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.9.0] - 2026-09-22
+
+### Added
+
+- Truthful scalar `cc.model` IDs from explicit hook metadata, with source
+  preservation and omission of placeholders or stringified objects/arrays.
+- Bounded, read-only assistant transcript lookup tied to the exact session,
+  tool-use ID, timestamp and subagent. Missing or uncorrelated evidence stays
+  absent; a SessionStart selection is never cached onto later tool hooks.
+- CJS/ESM model and SDK-version wire checks in the Node 18/20/22 CI matrix.
+
+### Compatibility
+
+- Still requires Pinta Manager 0.1.11 or later. Guard payloads, denial ordering,
+  event counts and redaction are unchanged; bundled `@pinta-ai/core` remains
+  `^0.8.0`. No new required envelope fields.
+- Host-selected models are not independently verified provider routing.
+
 ## [1.8.0] - 2026-09-20
 
 ### Changed

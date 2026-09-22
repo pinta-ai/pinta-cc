@@ -1,6 +1,8 @@
 import os from "os";
 import type { BaseEvent } from "./types.js";
 import { getClaudeCodeVersion } from "./claude-version.js";
+import { resolveModel } from "./model.js";
+import { applyModelEvidence } from "./model-evidence.js";
 import {
   attrsFromRecord,
   buildPayload,
@@ -33,7 +35,7 @@ function processOwner(): string {
   return cachedProcessOwner;
 }
 
-const PLUGIN_VERSION = "1.8.0"; // keep in sync with .claude-plugin/plugin.json
+const PLUGIN_VERSION = "1.9.0"; // keep in sync with .claude-plugin/plugin.json
 
 /**
  * Attribute keys for which redaction (Tier 1) is skipped. Truncation (Tier 3)
@@ -64,7 +66,7 @@ const ATTR_POLICY: AttrPolicy = {
   bashContextKeys: BASH_CONTEXT_KEYS,
 };
 
-function flattenEvent(event: BaseEvent): OtlpAttribute[] {
+function flattenEvent(event: BaseEvent, now: number): OtlpAttribute[] {
   const out: OtlpAttribute[] = [];
   // Discriminator first so aware-backend's detectIngestType hits it cheaply.
   out.push({ key: "ingest.type", value: { stringValue: "cc" } });
@@ -76,6 +78,7 @@ function flattenEvent(event: BaseEvent): OtlpAttribute[] {
     if (k === "hook_event_name") continue; // covered by cc.hook above
     rest[k] = v;
   }
+  applyModelEvidence(rest, resolveModel(event, now));
   out.push(...attrsFromRecord(rest, "cc", ATTR_POLICY));
   return out;
 }
@@ -105,12 +108,13 @@ export function buildOtlpPayload(args: {
   now?: number; // ms since epoch; injectable for tests
   versionCacheDir?: string;
 }): OtlpPayload {
+  const now = args.now ?? Date.now();
   return buildPayload({
     traceId: args.traceId,
     spanName: `cc.${snakeCase(args.event.hook_event_name)}`,
-    attributes: flattenEvent(args.event),
+    attributes: flattenEvent(args.event, now),
     resource: resourceAttrs(args.versionCacheDir),
     scope: { name: "pinta-cc", version: PLUGIN_VERSION },
-    now: args.now,
+    now,
   });
 }
