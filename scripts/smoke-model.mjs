@@ -7,6 +7,7 @@ import path from "node:path";
 import { performance } from "node:perf_hooks";
 
 const prefix = "cc";
+const sdkVersion = JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 const root = path.resolve(".model-smoke-" + randomUUID());
 const now = Date.now();
 const source = "transcript.assistant.message";
@@ -56,7 +57,8 @@ const server = http.createServer(async (req, res) => {
 await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 const endpoint = `http://127.0.0.1:${server.address().port}/v1/traces`;
 
-async function hook(bundle, sample, expected = sample.model) {
+async function hook(bundle, sample, checkCurrentVersion = true) {
+  const expected = sample.model;
   const home = path.join(root, randomUUID());
   fs.mkdirSync(home);
   const event = {
@@ -92,6 +94,12 @@ async function hook(bundle, sample, expected = sample.model) {
   const request = received.shift();
   assert.equal(request.url, "/v1/traces");
   assert.equal(request.authorization, undefined);
+  for (const resource of request.body.resourceSpans) {
+    const emittedVersion = resource.resource.attributes.find((attribute) => attribute.key === "telemetry.sdk.version")?.value.stringValue;
+    assert.equal(typeof emittedVersion, "string");
+    if (checkCurrentVersion) assert.equal(emittedVersion, sdkVersion);
+    for (const scope of resource.scopeSpans) assert.equal(scope.scope.version, emittedVersion);
+  }
   const spans = request.body.resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans));
   assert.equal(spans.length, 1);
   const models = spans[0].attributes.filter((attribute) => attribute.key === `${prefix}.model`);
@@ -123,13 +131,13 @@ try {
     const old = [], current = [];
     const sample = cases.find((item) => item.name === "correlated");
     for (let n = 0; n < 12; n++) {
-      old.push(await hook(path.resolve(baseline), { ...sample, model: undefined, source: undefined }));
+      old.push(await hook(path.resolve(baseline), { ...sample, model: undefined, source: undefined }, false));
       current.push(await hook(path.resolve("dist/index.js"), sample));
     }
     comparison = { samples: old.length, baselineMedianMs: median(old), currentMedianMs: median(current), medianPairedDeltaMs: median(current.map((ms, i) => ms - old[i])) };
   }
   const result = {
-    adapter: prefix, builds: ["cjs", "esm"], casesPerBuild: cases.length, verifiedRequests: requests,
+    adapter: prefix, sdkVersion, builds: ["cjs", "esm"], casesPerBuild: cases.length, verifiedRequests: requests,
     hookWallMedianMs: Object.fromEntries(Object.entries(durations).map(([name, values]) => [name, median(values)])),
     comparison, note: "Wall times include fresh Node startup and loopback OTLP; paired deltas include scheduler noise.",
   };

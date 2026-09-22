@@ -35,7 +35,7 @@ function processOwner(): string {
   return cachedProcessOwner;
 }
 
-const PLUGIN_VERSION = "1.8.0"; // keep in sync with .claude-plugin/plugin.json
+const PLUGIN_VERSION = "1.9.0"; // keep in sync with .claude-plugin/plugin.json
 
 /**
  * Attribute keys for which redaction (Tier 1) is skipped. Truncation (Tier 3)
