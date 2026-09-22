@@ -1,4 +1,7 @@
 node_modules/
+.validation/
+.model-tests/
+.model-smoke-*/
 dist/
 .plugin-data/
 env.json

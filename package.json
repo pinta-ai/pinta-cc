@@ -37,6 +37,7 @@
     "test:watch": "vitest",
     "smoke:import": "node scripts/smoke-import.mjs",
     "smoke:version": "node scripts/smoke-version.mjs",
+    "smoke:model": "node scripts/smoke-model.mjs",
     "mock-server": "npx tsx tools/mock-server.ts",
     "prepublishOnly": "npm run build"
   },

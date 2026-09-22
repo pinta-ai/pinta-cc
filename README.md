@@ -128,7 +128,54 @@ when telemetry is disabled.
 |-----------|-------|
 | `ingest.type` | `"cc"` (discriminator for aware-backend parser) |
 | `cc.hook` | Hook event name (e.g. `PreToolUse`) |
+| `cc.model` | Exact host-reported scalar model ID, when attributable |
+| `cc.model_source` | Host provenance or adapter evidence (see below) |
 | `cc.<key>` | All other top-level hook event fields (Bronze flattening) |
+
+### Model attribution and its limits
+
+An explicit hook `model` takes precedence: a string or a descriptor's `id`
+(or `name` when no `id` field exists), not stringified JSON. The source preserves
+the host's supplied `model_source` or defaults to `hook.model`.
+In particular, a SessionStart model is a host-selected model,
+**not proof of the routed response model**, and it is not cached for later
+tool calls.
+
+JSON-stringified objects/arrays (including `[object Object]`) are not IDs.
+Provider and requested/response fields remain unchanged. If a transcript
+replaces an unusable model, `model_source` describes that transcript evidence;
+a previous host source is retained as `cc.model_original_source`.
+
+For tool hooks without a usable model, the adapter reads the supplied
+`transcript_path` and uses `message.model` only from an `assistant` record whose
+`message.content` contains the exact `tool_use` ID from `tool_use_id`.
+`cc.model_source=transcript.assistant.message` identifies this evidence.
+The record's `sessionId` must match, its timestamp must not be in the future
+relative to the hook (or processing time if no hook timestamp is supplied),
+and its subagent identity must match. The agent is identified by `agent_id` or
+a session-bound `<session_id>/subagents/agent-<id>.jsonl` path, never by agent
+name. Sidechain/child records cannot supply a parent tool's model.
+
+PreToolUse, PostToolUse, PostToolUseFailure and permission hooks can use this
+lookup when they carry `tool_use_id`. Stop/lifecycle hooks without an explicit
+model, missing or not-yet-flushed assistant records, unsupported transcript
+formats, ambiguous/conflicting IDs, and records outside the read window remain
+model-less. There is no "latest assistant" fallback, no session-wide
+carry-forward, and no inference from global configuration, process/CLI
+versions, agent names or user prose.
+
+Blank, `unknown`, `undefined`, `null`, `n/a`, `none`, `auto` and `default` are
+omitted case-insensitively. Non-ID objects, control characters and IDs longer
+than 512 characters are also rejected. The input event is not mutated, and
+all model attributes still use the existing redaction pipeline.
+
+Model lookup is read-only and bounded to a 256 KiB prefix plus a 1 MiB tail
+and 4,096 complete JSONL records, with no subprocess, directory scan or model
+cache. Only absolute `.jsonl` regular files are opened; missing/unreadable
+files, leaf symlinks, malformed records and invalid identities fail quietly,
+and incomplete boundary lines are ignored. Transcript contents are never
+logged or exported. Explicit models and missing tool IDs require no
+model-lookup IO. Guard behavior and event counts are unchanged.
 
 ## Architecture
 
@@ -184,10 +231,18 @@ npm install
 npm run build         # tsc → dist/
 npm test              # vitest run
 npm run smoke:version # built CJS/ESM hooks -> local collector (after build)
+npm run smoke:model   # model attribution -> isolated loopback collector
 npm run mock-server   # Generic OTLP collector at http://localhost:3000
 ```
 
 ### Local integration test
+
+`smoke:model` exercises fresh built CJS/ESM hooks with isolated HOME/plugin
+data, no real Claude executable, and no manager/guard calls. Supplied, missing,
+placeholder, correlated, cross-session/subagent, future, partial and oversized
+transcript cases are verified. Results go to `.validation/model-smoke.json`.
+Optionally pass `-- --baseline=<previous-built-index.js>` for paired hook
+wall-time comparisons, including Node startup, local HTTP and scheduler noise.
 
 `smoke:version` uses isolated plugin data and a loopback collector, not your real
 configuration. On macOS/Linux it supplies an executable fixture by default.

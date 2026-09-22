@@ -6,6 +6,7 @@ export interface BaseEvent {
   cwd: string;
   permission_mode?: string;
   hook_event_name: string;
+  model?: string | { id?: string; name?: string; [key: string]: unknown };
   // Other hook-specific fields are accessed via flattening; we don't enumerate them.
   [key: string]: unknown;
 }
