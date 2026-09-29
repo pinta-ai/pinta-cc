@@ -19,7 +19,7 @@ export type { GuardPayload, GuardResult } from "@pinta-ai/core";
 
 const TIMEOUT_MS = 10_000;
 // Keep in sync with package.json. The manager parses `pinta-cc/<version>`.
-const GUARD_UA = "pinta-cc/1.9.1";
+const GUARD_UA = "pinta-cc/1.10.1";
 
 export function evaluateGuard(
   payload: GuardPayload,
