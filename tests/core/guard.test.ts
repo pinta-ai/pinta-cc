@@ -77,6 +77,24 @@ describe('evaluateGuard', () => {
     expect(headers['user-agent']).toMatch(/^pinta-cc\//);
   });
 
+  /**
+   * The manager bounds its own work — the backend package check in
+   * particular — by how long this hook will wait, and spends 80% of it. Core
+   * >=0.9.0 declares that wait as `x-pinta-guard-budget-ms`, so the manager
+   * reads cc's 10s from the request instead of from a table it keeps a copy of
+   * (PTA-579).
+   */
+  it('declares its 10s timeout to the manager as the caller budget', async () => {
+    const fetchMock = vi.fn(async () => new Response(
+      JSON.stringify({ decision: 'ALLOW', reason: null, durationMs: 1 }),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    ));
+    globalThis.fetch = fetchMock as never;
+    await evaluateGuard(payload(), 'http://127.0.0.1:5147/guard/evaluate');
+    const headers = (fetchMock.mock.calls[0]?.[1] as RequestInit).headers as Record<string, string>;
+    expect(headers['x-pinta-guard-budget-ms']).toBe('10000');
+  });
+
   it('tolerates older manager that omits userMessage (defaults to null)', async () => {
     globalThis.fetch = vi.fn(async () => new Response(
       JSON.stringify({ decision: 'DENY', reason: 'deny_credentials', durationMs: 8 }),

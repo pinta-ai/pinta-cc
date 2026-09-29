@@ -2,6 +2,25 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.10.0] - 2026-09-30
+
+### Added
+
+- The guard call declares its 10s timeout to the manager as
+  `x-pinta-guard-budget-ms` (via `@pinta-ai/core` 0.9.0). Manager 0.1.10+
+  bounds its own work — the backend package check in particular — by 80% of
+  the caller's timeout, and until now read cc's from a table of adaptor
+  timeouts copied into the manager repo. The number now lives only in
+  `src/core/guard.ts` (PTA-579).
+
+### Compatibility
+
+- No behavior change: the timeout stays 10_000ms, which is also what the
+  manager's table assumed for pinta-cc. Managers older than 0.1.10 ignore the
+  header.
+- Still requires Pinta Manager 0.1.11 or later. `@pinta-ai/core` `^0.8.0` →
+  `^0.9.0` (bundled).
+
 ## [1.9.0] - 2026-09-22
 
 ### Added
