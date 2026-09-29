@@ -2,6 +2,11 @@
 // historical cc behavior: 10s timeout, relay token + disable flag read from
 // process.env, and a `pinta-cc/<version>` User-Agent.
 //
+// Core >=0.9.0 also declares that timeout to the manager as
+// `x-pinta-guard-budget-ms`, which bounds the manager's own work by it instead
+// of by a copy of this number kept in the manager's repo (PTA-579). Changing
+// TIMEOUT_MS here is therefore the only change needed.
+//
 // Since core 0.8.0 the guard is asked about the OTLP payload the hook is about
 // to relay — the same object, built first — rather than a hand-assembled
 // summary of the event. The manager projects that span through the AgentEvent
