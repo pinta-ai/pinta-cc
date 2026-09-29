@@ -59,6 +59,7 @@ const SKIP_REDACT_KEYS: ReadonlySet<string> = new Set([
 const BASH_CONTEXT_KEYS: ReadonlySet<string> = new Set([
   "cc.tool_input",
   "cc.tool_response",
+  "cc.tool_calls",
 ]);
 
 const ATTR_POLICY: AttrPolicy = {

@@ -2,6 +2,30 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- Evaluate `PermissionRequest` and emit its native deny decision before local
+  telemetry deferral. ALLOW/REVIEW do not grant permission; `PermissionDenied`
+  remains observation-only (PTA-583).
+- Register and guard `PostToolBatch` using its original model-facing results,
+  including failed calls, and stop denied batches before the next model request.
+  Native Claude 2.1.267 ignores a run-stop on `PostToolUseFailure` itself, so
+  merely guarding that event would not protect the model (PTA-582).
+- Cover both gates in CJS/ESM process regressions, including REVIEW/disabled,
+  one-second completion despite delayed collector ACK, and original-span queueing.
+
+### Compatibility
+
+- Batch protection requires synchronous `PostToolBatch` registration and a
+  guard/Manager projecting `cc.tool_calls` as output. Managed registration must
+  be updated alongside the adapter. Hosts without this event remain unsupported
+  for failed-result protection; 2.1.267 is verified, not a minimum-version claim.
+- The existing successful-output gate, observation-only failure event, output
+  target metadata, bounded retry queue, and guard fail-open behavior remain.
+  A batch is a separate native event and can re-evaluate successful output.
+
 ## [1.10.1] - 2026-09-29
 
 ### Fixed

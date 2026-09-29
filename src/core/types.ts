@@ -35,6 +35,16 @@ export interface PostToolUseFailureEvent extends BaseEvent {
   is_interrupt?: boolean;
 }
 
+export interface PostToolBatchEvent extends BaseEvent {
+  hook_event_name: "PostToolBatch";
+  tool_calls: Array<{
+    tool_name: string;
+    tool_input: Record<string, unknown>;
+    tool_use_id: string;
+    tool_response: unknown;
+  }>;
+}
+
 export interface UserPromptSubmitEvent extends BaseEvent {
   hook_event_name: "UserPromptSubmit";
   prompt: string;
@@ -73,6 +83,10 @@ export function isPostToolUseEvent(
   return (
     event.hook_event_name === "PostToolUse" || event.hook_event_name === "PostToolUseFailure"
   );
+}
+
+export function isPostToolBatchEvent(event: BaseEvent): event is PostToolBatchEvent {
+  return event.hook_event_name === "PostToolBatch";
 }
 
 export function isUserPromptSubmitEvent(event: BaseEvent): event is UserPromptSubmitEvent {

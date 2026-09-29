@@ -14,6 +14,7 @@ import { loadConfig } from "./core/config.js";
 import {
   isPreToolUseEvent,
   isPostToolUseEvent,
+  isPostToolBatchEvent,
   isUserPromptSubmitEvent,
   isSessionEvent,
   isSubagentEvent,
@@ -55,7 +56,7 @@ export async function runHook(): Promise<number> {
       exitCode = await handleDefault(event);
     } else if (isPreToolUseEvent(event)) {
       exitCode = await handlePreToolUse(event, config);
-    } else if (isPostToolUseEvent(event)) {
+    } else if (isPostToolUseEvent(event) || isPostToolBatchEvent(event)) {
       exitCode = await handlePostToolUse(event, config);
     } else if (isUserPromptSubmitEvent(event)) {
       exitCode = await handleUserPrompt(event, config);
