@@ -2,6 +2,19 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.10.1] - 2026-09-29
+
+### Fixed
+
+- Publish the output-enforcement fix above both 1.10.0 and 1.9.1 so semantic
+  version selection chooses the fixed adapter.
+
+### Compatibility
+
+- Version-only forward release of the merged behavior shipped in 1.9.1:
+  retains the 1.10.0 timeout declaration, native output denial and deferred
+  DENY telemetry. No policy, timeout, dependency or hook behavior changes.
+
 ## [1.9.1] - 2026-09-29
 
 ### Fixed
