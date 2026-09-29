@@ -1,6 +1,6 @@
 import { hasOtlpEndpoint, type PintaConfig } from "../core/config.js";
 import type { BaseEvent } from "../core/types.js";
-import type { OtlpPayload } from "@pinta-ai/core";
+import { DiskRetryQueue, MAX_POST_BYTES, type OtlpPayload } from "@pinta-ai/core";
 import { Transport } from "../core/transport.js";
 import { TraceManager } from "../core/trace.js";
 import { buildOtlpPayload } from "../core/otlp.js";
@@ -9,7 +9,7 @@ import { buildOtlpPayload } from "../core/otlp.js";
  * The span for a hook event, before anything has been decided about it.
  *
  * Split out of `emitEvent` so a gating handler can build the payload, ask the
- * guard about that very object, attach the verdict, and then send it — the
+ * guard about that very object, attach the verdict, and then send or defer it — the
  * manager judges the span the backend will store, not a second reading of the
  * event. Non-gating handlers go straight through `emitEvent`.
  *
@@ -42,6 +42,21 @@ export async function sendPayload(payload: OtlpPayload, config: PintaConfig): Pr
   const transport = new Transport(config);
   await transport.flush();
   await transport.send(payload);
+}
+
+/**
+ * Persist an already-redacted span without network IO so a decided DENY can
+ * finish before the host deadline. Match DiskTransport's endpoint and size
+ * gates; the next ordinary sendPayload call drains the existing retry queue.
+ */
+export function deferPayload(payload: OtlpPayload, config: PintaConfig): void {
+  if (!hasOtlpEndpoint()) return;
+  const bytes = Buffer.byteLength(JSON.stringify(payload), "utf-8");
+  if (bytes > MAX_POST_BYTES) {
+    process.stderr.write(`[pinta-cc] dropping oversized span payload (${bytes} > ${MAX_POST_BYTES} bytes) — undeliverable, not queued\n`);
+    return;
+  }
+  new DiskRetryQueue(config.pluginData, "pinta-cc").enqueue(payload);
 }
 
 /**

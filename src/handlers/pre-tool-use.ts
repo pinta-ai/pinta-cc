@@ -2,7 +2,7 @@ import { attachGuard } from "@pinta-ai/core";
 import type { PintaConfig } from "../core/config.js";
 import type { PreToolUseEvent } from "../core/types.js";
 import { evaluateGuard } from "../core/guard.js";
-import { buildEventPayload, sendPayload } from "./shared.js";
+import { buildEventPayload, deferPayload, sendPayload } from "./shared.js";
 
 export async function handlePreToolUse(
   event: PreToolUseEvent,
@@ -18,9 +18,8 @@ export async function handlePreToolUse(
   const payload = buildEventPayload(event, config);
   const guard = await evaluateGuard(payload, process.env.PINTA_GUARD_ENDPOINT);
 
-  // SECURITY: enforce the guard decision BEFORE telemetry. A DENY must be
-  // written to stdout first so a later telemetry failure can never bubble to
-  // runHook's fail-open catch and silently ALLOW a tool the guard blocked.
+  // Print the native decision first, then persist locally and finish. Waiting
+  // for telemetry can make the host discard even valid DENY JSON on timeout.
   if (guard?.decision === "DENY") {
     // Prefer manager-supplied userMessage (carries the "Blocked by Pinta AI"
     // brand text + rule). Fall back to raw rule name for older managers, and
@@ -36,11 +35,13 @@ export async function handlePreToolUse(
     process.stdout.write(JSON.stringify(out) + "\n");
   }
 
-  // Telemetry is best-effort: its failure must never override the already
-  // written security decision (or flip an ALLOW into a fail-open error path).
-  // The verdict rides on the same span the guard judged, same spanId.
+  // The verdict rides on the same span the guard judged, even when deferred.
   try {
     attachGuard(payload, guard);
+    if (guard?.decision === "DENY") {
+      deferPayload(payload, config);
+      return 0;
+    }
     await sendPayload(payload, config);
   } catch (err) {
     process.stderr.write(`[pinta-cc] telemetry emit failed: ${err}\n`);

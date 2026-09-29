@@ -88,13 +88,17 @@ function run(entry, env, hook = "SessionStart") {
   });
 }
 
-function assertPayload(version) {
-  const payload = payloads.at(-1);
-  assert.ok(payload, "the built hook must actually POST telemetry");
+function assertPayload(version, payload = payloads.at(-1)) {
+  assert.ok(payload, "the built hook must persist or POST telemetry");
   const attrs = Object.fromEntries(payload.resourceSpans[0].resource.attributes.map((attr) => [attr.key, attr.value.stringValue]));
   assert.equal(attrs["service.name"], "claude-code");
   assert.equal(attrs["service.version"], version);
   assert.equal(attrs["telemetry.sdk.version"], sdkVersion);
+}
+
+function queued(data) {
+  return fs.readFileSync(path.join(data, "failed-spans.jsonl"), "utf8")
+    .trim().split("\n").map((line) => JSON.parse(line).payload);
 }
 
 try {
@@ -128,18 +132,30 @@ try {
     assert.equal(JSON.parse(cache)[0].version, expected);
 
     const second = await run(entry, env, "PostToolUse");
+    assert.equal(JSON.parse(second.stdout).continue, false);
     assert.equal(second.stderr, "");
-    assert.equal(payloads.length, before + 2);
-    assertPayload(expected);
+    assert.equal(payloads.length, before + 1);
+    assert.equal(queued(data).length, 1);
+    assertPayload(expected, queued(data)[0]);
     assert.equal(fs.readFileSync(cacheFile, "utf8"), cache, "a fresh hook process must reuse the native cache");
 
     timeline.length = 0;
     const denied = await run(entry, env, "PreToolUse");
     assert.equal(JSON.parse(denied.stdout).hookSpecificOutput.permissionDecision, "deny");
     assert.equal(denied.stderr, "");
+    assert.equal(payloads.length, before + 1);
+    const pending = queued(data);
+    assert.equal(pending.length, 2);
+    for (const payload of pending) assertPayload(expected, payload);
+    assert.deepEqual(timeline, ["deny"], "DENY must finish without collector IO");
+
+    const later = await run(entry, env);
+    assert.equal(later.stdout, "");
+    assert.equal(later.stderr, "");
     assert.equal(payloads.length, before + 3);
+    assert.deepEqual(payloads[before + 1].resourceSpans, pending.flatMap((payload) => payload.resourceSpans));
+    assert.equal(fs.existsSync(path.join(data, "failed-spans.jsonl")), false);
     assertPayload(expected);
-    assert.ok(timeline.indexOf("deny") < timeline.indexOf("trace"), "DENY must precede telemetry");
 
     const disabledData = path.join(root, `disabled-${entry}`);
     const disabled = await run(entry, {
@@ -154,21 +170,22 @@ try {
     assert.equal(fs.existsSync(disabledData), false);
 
     timeline.length = 0;
+    const unavailableData = path.join(root, `unavailable-${entry}`);
     const unavailable = await run(entry, {
       ...env,
       CLAUDE_CODE_EXECPATH: process.execPath,
-      CLAUDE_PLUGIN_DATA: path.join(root, `unavailable-${entry}`),
+      CLAUDE_PLUGIN_DATA: unavailableData,
     }, "PreToolUse");
     assert.equal(JSON.parse(unavailable.stdout).hookSpecificOutput.permissionDecision, "deny");
     assert.match(unavailable.stderr, /did not identify Claude Code/);
-    assert.equal(payloads.length, before + 4);
-    assertPayload("unknown");
-    assert.ok(timeline.indexOf("deny") < timeline.indexOf("trace"), "failed version discovery must not override DENY");
+    assert.equal(payloads.length, before + 3);
+    assertPayload("unknown", queued(unavailableData)[0]);
+    assert.deepEqual(timeline, ["deny"], "failed version discovery must not override DENY or trigger collector IO");
   }
   if (!external) {
     assert.equal(fs.readFileSync(countFile, "utf8").length, 2, "only one probe per bundle's plugin data, not one per hook");
   }
-  console.log(`[smoke:version] OK: CJS + ESM sent service.version=${expected}, SDK=${sdkVersion}; cross-process cache, DENY on discovery failure and disabled telemetry preserved`);
+  console.log(`[smoke:version] OK: CJS + ESM sent/queued service.version=${expected}, SDK=${sdkVersion}; cross-process cache, deferred DENY on discovery failure and disabled telemetry preserved`);
 } finally {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));

@@ -1,6 +1,6 @@
 {
   "name": "@pinta-ai/pinta-cc",
-  "version": "1.10.0",
+  "version": "1.9.1",
   "description": "Generic OTLP forwarder for Claude Code hook events",
   "main": "dist/index.js",
   "exports": {
@@ -38,6 +38,7 @@
     "smoke:import": "node scripts/smoke-import.mjs",
     "smoke:version": "node scripts/smoke-version.mjs",
     "smoke:model": "node scripts/smoke-model.mjs",
+    "smoke:guard": "node scripts/smoke-guard.mjs",
     "mock-server": "npx tsx tools/mock-server.ts",
     "prepublishOnly": "npm run build"
   },

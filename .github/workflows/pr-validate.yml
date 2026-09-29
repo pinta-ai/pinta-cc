@@ -23,6 +23,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - run: node_modules/.bin/tsc --noEmit --target ES2022 --module ESNext --moduleResolution Bundler --strict --esModuleInterop --skipLibCheck --types node tests/handlers/shared.test.ts tests/handlers/pre-tool-use.test.ts tests/handlers/post-tool-use.test.ts
       - run: npm run build
       - run: npm run smoke:import && npm run smoke:version
       - run: npm run smoke:model
+      - run: npm run smoke:guard
