@@ -2,6 +2,43 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.9.1] - 2026-09-29
+
+### Fixed
+
+- Evaluate successful `PostToolUse` output, including native `tool_response`,
+  using the original redaction-aware OTLP payload. Previously these events
+  emitted telemetry without asking the guard.
+- On an output `DENY`, emit Claude Code's supported `continue: false` stop JSON
+  before best-effort local persistence, using a fixed message that asks for a new
+  session and never reflects untrusted output or guard messages.
+- Finish both `PreToolUse` and `PostToolUse` DENYs without collector network IO,
+  deferring their original spans through the existing `DiskRetryQueue`. Merely
+  printing the response before awaiting telemetry was insufficient: a host
+  timeout could discard the decision while waiting for a slow collector.
+- Preserve original masked input/output evidence and span identity; attach
+  normal guard metadata plus `pinta.guard.target = "tool_output"` for every
+  non-null after-tool verdict.
+- Add native-output handler regressions and built CJS/ESM stdin/loopback checks
+  to PR validation, including a 1-second hook deadline with a 4-second collector
+  ACK, queue failure diagnostics, later-hook flush and non-gating boundaries.
+
+### Compatibility
+
+- This stops the current run on hosts honoring Claude Code's documented
+  synchronous `PostToolUse` stop contract. It does not undo an executed tool,
+  strip retained transcript content or make a resumed conversation safe.
+  Start a new session after an output denial; no persistent session lock or
+  automatic context clearing is introduced.
+- `PreToolUse` permission decisions, permission/lifecycle/internal hooks,
+  failed-tool telemetry, ALLOW/REVIEW and existing fail-open behavior remain
+  unchanged. No policy thresholds, dependency versions or required guard
+  request fields change.
+- With telemetry enabled, decided-DENY evidence persists in the existing local
+  retry queue; backend visibility waits for a later eligible hook to flush it.
+  Guard-only/telemetry-disabled mode does not retain new local evidence.
+  Existing size/retention limits and disk-failure diagnostics still apply.
+
 ## [1.9.0] - 2026-09-22
 
 ### Added

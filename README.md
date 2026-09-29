@@ -7,9 +7,10 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 - **OTLP transport**: converts 11 hook event types into OTLP/HTTP `resourceSpans` and sends them via `POST {endpoint}/traces`
 - **Bronze flattening**: every top-level field of a hook event is flattened into `cc.<key>` span attributes
 - **ULID per-turn traceId**: `UserPromptSubmit` starts a new ULID-based trace; all subsequent hooks in the same turn share it
-- **Retry queue**: on transport failure, payloads are appended to `.plugin-data/failed-spans.jsonl` (cap 1000) and flushed on the next hook invocation
+- **Retry queue**: DENY and transport-failure spans are persisted to `.plugin-data/failed-spans.jsonl` (cap 1000) and flushed by a later eligible telemetry hook
 - **Vendor-neutral**: any OTel-compatible collector works. Pinta Manager auto-configures the endpoint and token
 - **Identity at relay**: `member.identity.*` attributes are no longer attached at plugin time. Pinta Manager (or your own pipeline) attaches identity at the forwarding layer
+- **Optional guard enforcement**: denies tool input at `PreToolUse` and stops the current run when successful `PostToolUse` output is denied
 
 ## Channels
 
@@ -80,6 +81,73 @@ The plugin reads OTel env vars directly. `CLAUDE_PLUGIN_OPTION_*` env vars (set 
 |------------------|-|
 | `CLAUDE_PLUGIN_OPTION_ENDPOINT` | `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `CLAUDE_PLUGIN_OPTION_API_KEY` | `OTEL_EXPORTER_OTLP_HEADERS=x-pinta-relay-token=<key>` |
+
+## Tool-output guard and recovery
+
+When `PINTA_GUARD_ENDPOINT` is configured, successful `PostToolUse` events are
+evaluated through the same guard as `PreToolUse`. The adapter first builds the
+normal redaction-aware OTLP span, including native `tool_response`, and sends
+that original payload to the guard. It attaches the verdict to the same span
+before delivery or local deferral, preserving its `traceId`, `spanId`, input and output evidence.
+Every non-null after-tool verdict adds `pinta.guard.target = "tool_output"`:
+denial concerns the output, not whether the completed tool executed.
+
+Roll out telemetry-reader support for output-target verdicts before activating
+this adapter in managed installations. Older readers can interpret every guard
+denial as a prevented tool call rather than a completed tool with denied output.
+The target is retained as original extension metadata.
+
+On an output `DENY`, the hook exits successfully and emits exactly one JSON
+object before best-effort local persistence:
+
+```json
+{"continue":false,"stopReason":"Pinta blocked this tool output. Start a new session before continuing."}
+```
+
+This uses Claude Code's documented
+[`continue: false` / `stopReason` contract](https://code.claude.com/docs/en/hooks#json-output)
+to stop the current run, including when a tool completes during streaming.
+`PostToolUse` exit code 2 only provides stderr feedback, and `decision: "block"`
+alone is not this run-stop contract. The fixed message never copies tool output
+or guard-supplied reasons/messages into the conversation.
+
+**Decided DENYs never wait for collector network IO.** Both `PreToolUse` and
+`PostToolUse` write their existing native response, attach the guard metadata,
+persist the original redacted span using the existing `DiskRetryQueue`, and
+return without flushing or sending telemetry. Printing JSON first is not
+sufficient: a host timeout while waiting for a collector can invalidate that
+decision. The queued evidence retains the original input/output and span IDs,
+not replacement warning text.
+
+When telemetry is configured, evidence persists locally in
+`${CLAUDE_PLUGIN_DATA}/failed-spans.jsonl` (default:
+`${CLAUDE_PLUGIN_ROOT}/.plugin-data/failed-spans.jsonl`).
+**Backend visibility is delayed** until a later eligible telemetry hook
+successfully flushes the queue, including a hook in a new session. No queue is
+created or appended to in guard-only/telemetry-disabled mode. Local persistence
+uses the existing redaction, payload-size and 1000-entry retention limits.
+Queue write failures, oversized drops and oldest-entry eviction are diagnosed
+on stderr; they do not suppress the response or trigger a network fallback.
+
+**Start a new session after an output denial.** The tool already ran: this does
+not undo its effects, remove native results from the retained transcript, or
+make resuming/continuing that conversation safe. There is no automatic clearing
+or persistent session lock.
+
+`ALLOW`, `REVIEW`, inactive guarding and existing guard fail-open paths do not
+stop the run. `PostToolUseFailure` remains telemetry-only; this change covers
+successful tool output, not failed-tool errors. Permission, session, lifecycle
+and internal events keep their existing behavior, as does the `PreToolUse`
+permission-denial response.
+
+Enforcement requires synchronous hooks and a Claude Code host honoring the
+documented `PostToolUse` stop contract. The hook must finish within its host
+timeout: Claude Code [discards timed-out hook output](https://code.claude.com/docs/en/hooks#timeouts).
+Guard evaluation and local storage must still fit that deadline; removing
+collector IO from decided DENYs does not make those operations instantaneous.
+No minimum compatible host version is asserted here: adapter subprocess tests
+verify emitted JSON and transport, not an end-to-end compatibility matrix of
+Claude Code releases.
 
 ## Span attribute conventions
 
@@ -193,8 +261,8 @@ src/
 │   ├── identity.ts       # Empty stub (identity attribution moved to relay)
 │   └── redact.ts         # Tier-1 redaction + Tier-3 truncation
 └── handlers/
-    ├── pre-tool-use.ts   # flush → currentTrace → buildOtlpPayload → send → exit 0
-    ├── post-tool-use.ts
+    ├── pre-tool-use.ts   # build → guard → permission denial → defer DENY / send otherwise
+    ├── post-tool-use.ts  # successful output: build → guard → run stop → defer DENY / send otherwise
     ├── user-prompt.ts    # flush → newTrace → buildOtlpPayload → send → exit 0
     ├── session.ts
     ├── subagent.ts
@@ -232,10 +300,22 @@ npm run build         # tsc → dist/
 npm test              # vitest run
 npm run smoke:version # built CJS/ESM hooks -> local collector (after build)
 npm run smoke:model   # model attribution -> isolated loopback collector
+npm run smoke:guard   # output enforcement -> isolated loopback guard + collector
 npm run mock-server   # Generic OTLP collector at http://localhost:3000
 ```
 
 ### Local integration test
+
+`smoke:guard` exercises both built entrypoints with native `PostToolUse` `Read`
+stdin payloads and isolated HOME/plugin data. It verifies real guard requests,
+fixed/unchanged DENY JSON and zero collector calls with a 1-second hook deadline
+and a 4-second collector ACK delay. Both deny paths retain masked original
+spans in the existing retry queue; later hook processes flush the same IDs and
+evidence. Queue failures are diagnosed without losing the response, and
+guard-only mode never queues evidence. ALLOW/REVIEW/inactive/fail-open behavior,
+collector failure and failed-tool/permission/lifecycle routing remain covered.
+Only loopback fixture endpoints are contacted; no installed hooks or live
+Claude session are modified.
 
 `smoke:model` exercises fresh built CJS/ESM hooks with isolated HOME/plugin
 data, no real Claude executable, and no manager/guard calls. Supplied, missing,

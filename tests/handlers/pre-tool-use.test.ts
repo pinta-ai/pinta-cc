@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from "vitest";
 import { buildPayload, type OtlpPayload } from "@pinta-ai/core";
 
 // The handler mocks isolate the security-relevant ordering: guard decision vs.
@@ -9,12 +9,13 @@ vi.mock("../../src/core/guard.js", () => ({
 }));
 vi.mock("../../src/handlers/shared.js", () => ({
   buildEventPayload: vi.fn(),
+  deferPayload: vi.fn(),
   sendPayload: vi.fn(),
 }));
 
 import { handlePreToolUse } from "../../src/handlers/pre-tool-use.js";
 import { evaluateGuard } from "../../src/core/guard.js";
-import { buildEventPayload, sendPayload } from "../../src/handlers/shared.js";
+import { buildEventPayload, deferPayload, sendPayload } from "../../src/handlers/shared.js";
 import type { PreToolUseEvent } from "../../src/core/types.js";
 import type { PintaConfig } from "../../src/core/config.js";
 
@@ -27,9 +28,12 @@ const config: PintaConfig = {
 const event: PreToolUseEvent = {
   hook_event_name: "PreToolUse",
   session_id: "sess-1",
+  transcript_path: "/workspace/session.jsonl",
+  cwd: "/workspace",
   tool_name: "Bash",
   tool_input: { command: "cat ~/.aws/credentials" },
-} as PreToolUseEvent;
+  tool_use_id: "tool-1",
+};
 
 /** A real single-span payload, as `buildEventPayload` would produce. */
 function freshPayload(): OtlpPayload {
@@ -43,11 +47,17 @@ function freshPayload(): OtlpPayload {
 }
 
 describe("handlePreToolUse — security decision vs. telemetry ordering", () => {
-  let writeSpy: ReturnType<typeof vi.spyOn>;
+  let writeSpy: MockInstance<typeof process.stdout.write>;
   let writes: string[];
+  let errors: string[];
 
   beforeEach(() => {
     writes = [];
+    errors = [];
+    vi.spyOn(process.stderr, "write").mockImplementation((chunk) => {
+      errors.push(String(chunk));
+      return true;
+    });
     writeSpy = vi
       .spyOn(process.stdout, "write")
       .mockImplementation((chunk: any) => {
@@ -55,24 +65,24 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
         return true;
       });
     vi.mocked(sendPayload).mockReset();
+    vi.mocked(deferPayload).mockReset();
     vi.mocked(evaluateGuard).mockReset();
     vi.mocked(buildEventPayload).mockReset();
     vi.mocked(buildEventPayload).mockImplementation(() => freshPayload());
   });
 
   afterEach(() => {
-    writeSpy.mockRestore();
+    vi.restoreAllMocks();
   });
 
-  it("emits the DENY permission JSON even when telemetry emission throws", async () => {
+  it("emits the unchanged DENY permission JSON even when deferring telemetry throws", async () => {
     vi.mocked(evaluateGuard).mockResolvedValue({
       decision: "DENY",
       reason: "deny_credentials",
       userMessage: "⛔ Blocked by Pinta AI — deny_credentials",
       durationMs: 8,
     } as any);
-    // Telemetry blows up (disk write error, os.userInfo throwing, etc.).
-    vi.mocked(sendPayload).mockRejectedValue(new Error("disk exploded"));
+    vi.mocked(deferPayload).mockImplementation(() => { throw new Error("disk exploded"); });
 
     const code = await handlePreToolUse(event, config);
 
@@ -84,9 +94,12 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toBe(
       "⛔ Blocked by Pinta AI — deny_credentials",
     );
+    expect(writes).toHaveLength(1);
+    expect(errors.join("")).toContain("telemetry emit failed: Error: disk exploded");
+    expect(sendPayload).not.toHaveBeenCalled();
   });
 
-  it("writes the DENY decision BEFORE telemetry is emitted", async () => {
+  it("writes the DENY decision before deferring the span, without flushing or sending", async () => {
     const order: string[] = [];
     vi.mocked(evaluateGuard).mockResolvedValue({
       decision: "DENY",
@@ -98,13 +111,14 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
       if (String(chunk).includes("permissionDecision")) order.push("stdout");
       return true;
     });
-    vi.mocked(sendPayload).mockImplementation(async () => {
-      order.push("emit");
+    vi.mocked(deferPayload).mockImplementation(() => {
+      order.push("defer");
     });
 
     await handlePreToolUse(event, config);
 
-    expect(order).toEqual(["stdout", "emit"]);
+    expect(order).toEqual(["stdout", "defer"]);
+    expect(sendPayload).not.toHaveBeenCalled();
   });
 
   it("ALLOW: no permission JSON, exit 0, telemetry still emitted", async () => {
@@ -116,6 +130,7 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
     expect(code).toBe(0);
     expect(writes.some((w) => w.includes("permissionDecision"))).toBe(false);
     expect(vi.mocked(sendPayload)).toHaveBeenCalledOnce();
+    expect(deferPayload).not.toHaveBeenCalled();
   });
 });
 
@@ -131,6 +146,7 @@ describe("handlePreToolUse — security decision vs. telemetry ordering", () => 
 describe("handlePreToolUse — the guard is asked about the span that is then sent", () => {
   beforeEach(() => {
     vi.mocked(sendPayload).mockReset();
+    vi.mocked(deferPayload).mockReset();
     vi.mocked(evaluateGuard).mockReset();
     vi.mocked(buildEventPayload).mockReset();
     vi.mocked(buildEventPayload).mockImplementation(() => freshPayload());
@@ -145,7 +161,7 @@ describe("handlePreToolUse — the guard is asked about the span that is then se
     expect(vi.mocked(sendPayload).mock.calls[0]?.[0]).toBe(built);
   });
 
-  it("sends the judged span with the verdict attached, same spanId", async () => {
+  it("defers the judged span with the verdict attached, same spanId", async () => {
     vi.mocked(evaluateGuard).mockResolvedValue({
       decision: "DENY",
       reason: "deny_credentials",
@@ -156,13 +172,15 @@ describe("handlePreToolUse — the guard is asked about the span that is then se
     vi.spyOn(process.stdout, "write").mockImplementation(() => true);
     await handlePreToolUse(event, config);
     const judged = vi.mocked(evaluateGuard).mock.calls[0]?.[0] as OtlpPayload;
-    const sent = vi.mocked(sendPayload).mock.calls[0]?.[0] as OtlpPayload;
+    const sent = vi.mocked(deferPayload).mock.calls[0]?.[0] as OtlpPayload;
     expect(sent).toBe(judged);
     const span = sent.resourceSpans[0].scopeSpans[0].spans[0];
     const attrs = Object.fromEntries(span.attributes.map((a) => [a.key, a.value]));
     expect(attrs["pinta.guard.decision"]).toEqual({ stringValue: "deny" });
     expect(attrs["pinta.guard.matched_rule"]).toEqual({ stringValue: "deny_credentials" });
     expect(attrs["pinta.client.rtt_ms"]).toEqual({ intValue: 12 });
+    expect(attrs["pinta.guard.target"]).toBeUndefined();
+    expect(sendPayload).not.toHaveBeenCalled();
     vi.restoreAllMocks();
   });
 });
