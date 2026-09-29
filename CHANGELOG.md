@@ -32,12 +32,32 @@ All notable changes to pinta-cc are documented here.
   automatic context clearing is introduced.
 - `PreToolUse` permission decisions, permission/lifecycle/internal hooks,
   failed-tool telemetry, ALLOW/REVIEW and existing fail-open behavior remain
-  unchanged. No policy thresholds, dependency versions or required guard
-  request fields change.
+  unchanged. No policy thresholds or required guard request fields change.
+- This out-of-order patch retains the already-released `@pinta-ai/core` 0.9.0
+  timeout-declaration behavior from 1.10.0.
 - With telemetry enabled, decided-DENY evidence persists in the existing local
   retry queue; backend visibility waits for a later eligible hook to flush it.
   Guard-only/telemetry-disabled mode does not retain new local evidence.
   Existing size/retention limits and disk-failure diagnostics still apply.
+
+## [1.10.0] - 2026-09-30
+
+### Added
+
+- The guard call declares its 10s timeout to the manager as
+  `x-pinta-guard-budget-ms` (via `@pinta-ai/core` 0.9.0). Manager 0.1.10+
+  bounds its own work — the backend package check in particular — by 80% of
+  the caller's timeout, and until now read cc's from a table of adaptor
+  timeouts copied into the manager repo. The number now lives only in
+  `src/core/guard.ts` (PTA-579).
+
+### Compatibility
+
+- No behavior change: the timeout stays 10_000ms, which is also what the
+  manager's table assumed for pinta-cc. Managers older than 0.1.10 ignore the
+  header.
+- Still requires Pinta Manager 0.1.11 or later. `@pinta-ai/core` `^0.8.0` →
+  `^0.9.0` (bundled).
 
 ## [1.9.0] - 2026-09-22
 

@@ -73,8 +73,14 @@ resulting lockfile — see the `TS2307` trap above.
 1. Bump the version (`npm run bump` if available, or edit `package.json`); commit.
 2. Push a `v<version>` tag (or publish a GitHub Release).
 3. The `publish` workflow runs: `npm ci` (installs core from GitHub Packages) →
-   `npm run build` (esbuild bundles + minifies core into `dist/`) → `npm publish`
+   `npm run build` (esbuild bundles + minifies core into `dist/`) →
+   `npm publish --access public --tag latest`
    to npmjs (verifies tag == version, skips if already published, posts Slack).
+
+The workflow explicitly targets `latest`, including approved out-of-order
+releases. Such a release becomes `latest` even if a higher version is already
+published. Verify the intended release version and channel before pushing its
+Git tag; never move an existing tag.
 
 The job runs on **node 20** and pins **npm 11.18.0**. Do not move it to
 `npm@latest`: npm 12.x requires node >= 22.22 and aborts with `EBADENGINE`.

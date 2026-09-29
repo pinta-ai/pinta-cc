@@ -53,7 +53,7 @@ jobs:
 
       - name: Publish
         if: steps.check-version.outputs.skip == 'false'
-        run: npm publish --access public
+        run: npm publish --access public --tag latest
 
       - name: Notify Slack
         if: always()
