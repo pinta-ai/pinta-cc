@@ -2,10 +2,13 @@
 
 All notable changes to pinta-cc are documented here.
 
-## [Unreleased]
+## [1.10.2] - 2026-09-30
 
 ### Fixed
 
+- Bundle `@pinta-ai/core` `^0.9.2`, preserving ordinary `find -path` and
+  `find -print` arguments while retaining mysql-family short-password
+  masking (PTA-515). Guard/export ordering is unchanged.
 - Evaluate `PermissionRequest` and emit its native deny decision before local
   telemetry deferral. ALLOW/REVIEW do not grant permission; `PermissionDenied`
   remains observation-only (PTA-583).
