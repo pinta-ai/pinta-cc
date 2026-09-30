@@ -17,6 +17,12 @@ const stop = {
   stopReason: "Pinta blocked this tool output. Start a new session before continuing.",
 };
 const toolHooks = new Set(["PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionDenied"]);
+const registration = JSON.parse(fs.readFileSync(path.join(repo, "hooks/hooks.json"), "utf8"));
+for (const event of ["PreToolUse", "PermissionRequest", "PostToolUse", "PostToolBatch"]) {
+  assert.ok(registration.hooks[event]?.some((group) => group.hooks?.some(
+    (hook) => hook.type === "command" && hook.command.includes("/dist/index.js") && !hook.async,
+  )), `${event} must be registered synchronously in the packaged plugin`);
+}
 let active;
 let verified = 0;
 fs.mkdirSync(root, { recursive: true });
@@ -82,8 +88,15 @@ function assertStop(result) {
 }
 
 function assertDeny(result) {
-  if (result.event.hook_event_name === "PostToolUse") {
+  if (["PostToolUse", "PostToolBatch"].includes(result.event.hook_event_name)) {
     assertStop(result);
+  } else if (result.event.hook_event_name === "PermissionRequest") {
+    assert.deepEqual(JSON.parse(result.stdout), {
+      hookSpecificOutput: {
+        hookEventName: "PermissionRequest",
+        decision: { behavior: "deny", message },
+      },
+    });
   } else {
     assert.equal(result.stdout.trim().split("\n").length, 1);
     assert.deepEqual(JSON.parse(result.stdout), {
@@ -120,11 +133,17 @@ function assertEvidence(result, decision, failOpenReason) {
   const before = attributes(judged[0]);
   const after = attributes(sent[0]);
   assert.equal(before["cc.hook"], result.event.hook_event_name);
-  assert.equal(before["cc.tool_name"], "Read");
-  assert.equal(before["cc.tool_input"], JSON.stringify(result.event.tool_input));
+  if (result.event.hook_event_name !== "PostToolBatch") {
+    assert.equal(before["cc.tool_name"], "Read");
+    assert.equal(before["cc.tool_input"], JSON.stringify(result.event.tool_input));
+  }
   if (result.event.hook_event_name === "PostToolUse") {
     assert.ok(before["cc.tool_response"].includes(canary));
     assert.ok(before["cc.tool_response"].includes("[REDACTED:bearer_token]"));
+    assert.equal(after["pinta.guard.target"], "tool_output");
+  } else if (result.event.hook_event_name === "PostToolBatch") {
+    assert.ok(before["cc.tool_calls"].includes(canary));
+    assert.equal(after["cc.tool_calls"], before["cc.tool_calls"]);
     assert.equal(after["pinta.guard.target"], "tool_output");
   } else {
     assert.equal(after["pinta.guard.target"], undefined);
@@ -187,6 +206,13 @@ async function run(entry, endpoint, options = {}) {
     };
   } else if (hook === "PostToolUseFailure") {
     event.error = canary;
+  } else if (hook === "PostToolBatch") {
+    event.tool_calls = [{
+      tool_name: "Bash",
+      tool_input: { command: "printf PINTA_HARMLESS_BATCH_FIXTURE" },
+      tool_use_id: "failed-tool-1",
+      tool_response: `Exit code 1\n${canary}`,
+    }];
   } else if (hook === "SessionStart") {
     event.source = "resume";
   } else if (hook === "UserPromptSubmit") {
@@ -247,7 +273,7 @@ try {
     assert.deepEqual(denied.timeline, ["guard", "stop"]);
     assertFlushed(denied, await run(entry, endpoint, { home: denied.home, hook: "SessionEnd" }));
 
-    for (const hook of ["PostToolUse", "PreToolUse"]) {
+    for (const hook of ["PostToolUse", "PreToolUse", "PermissionRequest", "PostToolBatch"]) {
       for (const mode of ["ALLOW", "REVIEW", "error", "malformed"]) {
         const result = await run(entry, endpoint, { hook, mode });
         assert.equal(result.stdout, "");
@@ -296,7 +322,7 @@ try {
     assertFlushed(failedTelemetry, await run(entry, endpoint, { home: failedTelemetry.home, hook: "SessionEnd" }));
 
     for (const hook of [
-      "PostToolUseFailure", "PermissionRequest", "PermissionDenied", "SessionStart",
+      "PostToolUseFailure", "PermissionDenied", "SessionStart",
       "SessionEnd", "UserPromptSubmit", "SubagentStart", "SubagentStop", "Stop",
       "Notification", "TaskCreated", "TaskCompleted", "InternalEvent",
     ]) {
@@ -309,7 +335,7 @@ try {
       if (!skipped) assert.ok(!Object.keys(attributes(sent[0])).some((key) => key.startsWith("pinta.guard.")));
     }
   }
-  console.log(`[smoke:guard] OK: ${verified} isolated CJS/ESM stdin runs; DENY exits within 1s despite 4s collector ACK, no collector IO, original masked spans queued then flushed, failure diagnostics and non-DENY/lifecycle boundaries`);
+  console.log(`[smoke:guard] OK: ${verified} isolated CJS/ESM stdin runs; pre/permission/success/batch DENY exits within 1s despite 4s collector ACK, no collector IO, original masked spans queued then flushed, failure diagnostics and non-DENY/lifecycle boundaries`);
 } finally {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));

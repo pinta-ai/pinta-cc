@@ -1,14 +1,15 @@
 import { attachGuard } from "@pinta-ai/core";
 import type { PintaConfig } from "../core/config.js";
-import type { PostToolUseEvent, PostToolUseFailureEvent } from "../core/types.js";
+import type { PostToolBatchEvent, PostToolUseEvent, PostToolUseFailureEvent } from "../core/types.js";
 import { evaluateGuard } from "../core/guard.js";
 import { buildEventPayload, deferPayload, emitEvent, sendPayload } from "./shared.js";
 
 export async function handlePostToolUse(
-  event: PostToolUseEvent | PostToolUseFailureEvent,
+  event: PostToolUseEvent | PostToolUseFailureEvent | PostToolBatchEvent,
   config: PintaConfig,
 ): Promise<number> {
   if (event.hook_event_name === "PostToolUseFailure") {
+    // Claude ignores a run-stop on this event; PostToolBatch gates its result.
     await emitEvent(event, config);
     return 0;
   }

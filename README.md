@@ -4,13 +4,13 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 
 ## Features
 
-- **OTLP transport**: converts 11 hook event types into OTLP/HTTP `resourceSpans` and sends them via `POST {endpoint}/traces`
+- **OTLP transport**: converts 12 hook event types into OTLP/HTTP `resourceSpans` and sends them via `POST {endpoint}/traces`
 - **Bronze flattening**: every top-level field of a hook event is flattened into `cc.<key>` span attributes
 - **ULID per-turn traceId**: `UserPromptSubmit` starts a new ULID-based trace; all subsequent hooks in the same turn share it
 - **Retry queue**: DENY and transport-failure spans are persisted to `.plugin-data/failed-spans.jsonl` (cap 1000) and flushed by a later eligible telemetry hook
 - **Vendor-neutral**: any OTel-compatible collector works. Pinta Manager auto-configures the endpoint and token
 - **Identity at relay**: `member.identity.*` attributes are no longer attached at plugin time. Pinta Manager (or your own pipeline) attaches identity at the forwarding layer
-- **Optional guard enforcement**: denies tool input at `PreToolUse` and stops the current run when successful `PostToolUse` output is denied
+- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; stops denied successful output at `PostToolUse` and model-facing batch results (including failures) at `PostToolBatch`
 
 ## Channels
 
@@ -84,9 +84,10 @@ The plugin reads OTel env vars directly. `CLAUDE_PLUGIN_OPTION_*` env vars (set 
 
 ## Tool-output guard and recovery
 
-When `PINTA_GUARD_ENDPOINT` is configured, successful `PostToolUse` events are
-evaluated through the same guard as `PreToolUse`. The adapter first builds the
-normal redaction-aware OTLP span, including native `tool_response`, and sends
+When `PINTA_GUARD_ENDPOINT` is configured, successful `PostToolUse` and
+`PostToolBatch` events are evaluated through the same guard as `PreToolUse`.
+The adapter first builds the normal redaction-aware OTLP span, including native
+`tool_response` or the batch's `tool_calls` array, and sends
 that original payload to the guard. It attaches the verdict to the same span
 before delivery or local deferral, preserving its `traceId`, `spanId`, input and output evidence.
 Every non-null after-tool verdict adds `pinta.guard.target = "tool_output"`:
@@ -96,6 +97,21 @@ Roll out telemetry-reader support for output-target verdicts before activating
 this adapter in managed installations. Older readers can interpret every guard
 denial as a prevented tool call rather than a completed tool with denied output.
 The target is retained as original extension metadata.
+
+**Failed results require `PostToolBatch`.** In native Claude Code 2.1.267,
+`PostToolUseFailure` receives the error but ignores a parsed `continue: false`;
+the next model request still receives that error. `PostToolBatch` runs before
+the next model call, carries model-facing results for all calls (including
+failed calls), and honors the run-stop response. The adapter therefore keeps
+the failure event observation-only and gates the batch without cross-process
+pending-decision state. A batch is a separate native event and may re-evaluate
+successful results already checked at `PostToolUse`.
+
+The plugin registers `PostToolBatch`. Managed/direct installations must also
+register this synchronous hook, and the Manager/guard must project
+`cc.tool_calls[].tool_response` as **output**, not interpret the batch's tool
+inputs as new commands. Updating only the adapter is insufficient. Hosts
+without a working batch hook have no failed-result enforcement guarantee.
 
 On an output `DENY`, the hook exits successfully and emits exactly one JSON
 object before best-effort local persistence:
@@ -111,8 +127,9 @@ to stop the current run, including when a tool completes during streaming.
 alone is not this run-stop contract. The fixed message never copies tool output
 or guard-supplied reasons/messages into the conversation.
 
-**Decided DENYs never wait for collector network IO.** Both `PreToolUse` and
-`PostToolUse` write their existing native response, attach the guard metadata,
+**Decided DENYs never wait for collector network IO.** `PreToolUse`,
+`PermissionRequest`, `PostToolUse` and `PostToolBatch` write their native
+response, attach the guard metadata,
 persist the original redacted span using the existing `DiskRetryQueue`, and
 return without flushing or sending telemetry. Printing JSON first is not
 sufficient: a host timeout while waiting for a collector can invalidate that
@@ -135,19 +152,23 @@ make resuming/continuing that conversation safe. There is no automatic clearing
 or persistent session lock.
 
 `ALLOW`, `REVIEW`, inactive guarding and existing guard fail-open paths do not
-stop the run. `PostToolUseFailure` remains telemetry-only; this change covers
-successful tool output, not failed-tool errors. Permission, session, lifecycle
-and internal events keep their existing behavior, as does the `PreToolUse`
+stop the run. `PermissionRequest` now evaluates the original permission span
+and emits `hookSpecificOutput.decision = {behavior: "deny", message: ...}` on
+DENY. Other decisions emit nothing: they do not automatically approve a
+native permission request. `PermissionDenied`, session, lifecycle and internal
+events keep their existing observation behavior, as does the `PreToolUse`
 permission-denial response.
 
 Enforcement requires synchronous hooks and a Claude Code host honoring the
-documented `PostToolUse` stop contract. The hook must finish within its host
+documented `PostToolUse`/`PostToolBatch` stop contracts. The hook must finish within its host
 timeout: Claude Code [discards timed-out hook output](https://code.claude.com/docs/en/hooks#timeouts).
 Guard evaluation and local storage must still fit that deadline; removing
 collector IO from decided DENYs does not make those operations instantaneous.
-No minimum compatible host version is asserted here: adapter subprocess tests
-verify emitted JSON and transport, not an end-to-end compatibility matrix of
-Claude Code releases.
+The native batch and permission contracts were verified with Claude Code
+2.1.267 using an isolated HOME, a loopback-only provider, and harmless
+read/failed-command fixtures. This is not a minimum-version claim or proof
+of live policy reachability; that additionally requires the corresponding
+Manager projection, registration and enabled policy.
 
 ## Span attribute conventions
 
@@ -262,7 +283,7 @@ src/
 │   └── redact.ts         # Tier-1 redaction + Tier-3 truncation
 └── handlers/
     ├── pre-tool-use.ts   # build → guard → permission denial → defer DENY / send otherwise
-    ├── post-tool-use.ts  # successful output: build → guard → run stop → defer DENY / send otherwise
+    ├── post-tool-use.ts  # success/batch output: build → guard → run stop → defer DENY / send otherwise
     ├── user-prompt.ts    # flush → newTrace → buildOtlpPayload → send → exit 0
     ├── session.ts
     ├── subagent.ts
@@ -286,7 +307,7 @@ Each hook invocation spawns a fresh Node process. One hook = one OTLP span = one
 
 ## Captured events (11)
 
-PreToolUse, PostToolUse, PostToolUseFailure, UserPromptSubmit, SessionStart, SessionEnd, PermissionRequest, PermissionDenied, SubagentStart, SubagentStop, Stop
+PreToolUse, PostToolUse, PostToolUseFailure, PostToolBatch, UserPromptSubmit, SessionStart, SessionEnd, PermissionRequest, PermissionDenied, SubagentStart, SubagentStop, Stop
 
 ## Skipped events (3, exit 0 immediately)
 
@@ -306,8 +327,9 @@ npm run mock-server   # Generic OTLP collector at http://localhost:3000
 
 ### Local integration test
 
-`smoke:guard` exercises both built entrypoints with native `PostToolUse` `Read`
-stdin payloads and isolated HOME/plugin data. It verifies real guard requests,
+`smoke:guard` exercises both built entrypoints with native `PostToolUse`,
+`PostToolBatch`, `PreToolUse` and `PermissionRequest` stdin payloads and isolated
+HOME/plugin data. It verifies real guard requests,
 fixed/unchanged DENY JSON and zero collector calls with a 1-second hook deadline
 and a 4-second collector ACK delay. Both deny paths retain masked original
 spans in the existing retry queue; later hook processes flush the same IDs and

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { DiskRetryQueue, type OtlpPayload } from "@pinta-ai/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PintaConfig } from "../../src/core/config.js";
-import type { PostToolUseEvent } from "../../src/core/types.js";
+import type { PostToolBatchEvent, PostToolUseEvent } from "../../src/core/types.js";
 import * as guard from "../../src/core/guard.js";
 import * as shared from "../../src/handlers/shared.js";
 import { handlePostToolUse } from "../../src/handlers/post-tool-use.js";
@@ -37,6 +37,15 @@ function response(decision: string) {
     userMessage: `message: ${CANARY}`,
     durationMs: 8,
   }), { status: 200 });
+}
+
+function failedBatch(event: PostToolUseEvent): PostToolBatchEvent {
+  const { tool_name, tool_input, tool_use_id, tool_response: _output, ...base } = event;
+  return {
+    ...base,
+    hook_event_name: "PostToolBatch",
+    tool_calls: [{ tool_name, tool_input, tool_use_id, tool_response: `Exit code 1\n${CANARY}` }],
+  };
 }
 
 describe("handlePostToolUse — native output enforcement", () => {
@@ -310,14 +319,11 @@ describe("handlePostToolUse — native output enforcement", () => {
     expect(fs.existsSync(path.join(config.pluginData, "failed-spans.jsonl"))).toBe(false);
   });
 
-  it("leaves failed tools telemetry-only even when their error contains the canary", async () => {
+  it("keeps the nonblocking failure event observation-only; PostToolBatch owns its gate", async () => {
     const { tool_response: _output, ...base } = event;
 
     expect(await handlePostToolUse({
-      ...base,
-      hook_event_name: "PostToolUseFailure",
-      error: CANARY,
-      is_interrupt: true,
+      ...base, hook_event_name: "PostToolUseFailure", error: CANARY, is_interrupt: true,
     }, config)).toBe(0);
 
     expect(guard.evaluateGuard).not.toHaveBeenCalled();
@@ -329,5 +335,86 @@ describe("handlePostToolUse — native output enforcement", () => {
       "cc.is_interrupt": true,
     });
     expect(Object.keys(attributes(requests[0].payload)).some((key) => key.startsWith("pinta.guard."))).toBe(false);
+  });
+
+  it.each(["string", "content blocks"])("judges original batch output and stops DENY (%s)", async (shape) => {
+    const batch = failedBatch(event);
+    if (shape === "content blocks") {
+      batch.tool_calls[0].tool_response = [{ type: "text", text: `Exit code 1\n${CANARY}` }];
+    }
+    batch.tool_calls.push({
+      tool_name: "Read", tool_use_id: "read-2",
+      tool_input: { file_path: "benign.txt" }, tool_response: "Harmless result",
+    });
+    guardReply = async () => response("DENY");
+
+    expect(await handlePostToolUse(batch, config)).toBe(0);
+
+    expect(guard.evaluateGuard).toHaveBeenCalledOnce();
+    expect(writes).toEqual([JSON.stringify(STOP) + "\n"]);
+    expect(writes[0]).not.toContain(CANARY);
+    expect(requests.map((request) => request.url)).toEqual([GUARD_ENDPOINT]);
+    const judged = requests[0].payload;
+    expect(attributes(judged)).toMatchObject({
+      "cc.hook": "PostToolBatch",
+      "cc.tool_calls": JSON.stringify(batch.tool_calls),
+    });
+    expect(attributes(judged)["cc.tool_response"]).toBeUndefined();
+    expect(attributes(judged)["cc.error"]).toBeUndefined();
+    expect(Object.keys(attributes(judged)).some((key) => key.startsWith("pinta.guard."))).toBe(false);
+    const queued = new DiskRetryQueue(config.pluginData, "pinta-cc").readAll();
+    expect(queued).toHaveLength(1);
+    expect(span(queued[0].payload).spanId).toBe(span(judged).spanId);
+    expect(span(queued[0].payload).traceId).toBe(span(judged).traceId);
+    expect(span(queued[0].payload).attributes).toEqual(expect.arrayContaining(span(judged).attributes));
+    expect(attributes(queued[0].payload)).toMatchObject({
+      "pinta.guard.decision": "deny",
+      "pinta.guard.target": "tool_output",
+      "cc.tool_calls": JSON.stringify(batch.tool_calls),
+    });
+    expect(shared.sendPayload).not.toHaveBeenCalled();
+  });
+
+  it.each(["ALLOW", "REVIEW"])("preserves %s on batch output without stopping", async (decision) => {
+    const batch = failedBatch(event);
+    guardReply = async () => response(decision);
+
+    expect(await handlePostToolUse(batch, config)).toBe(0);
+
+    expect(writes).toEqual([]);
+    expect(requests.map((request) => request.url)).toEqual([GUARD_ENDPOINT, TRACES_ENDPOINT]);
+    expect(attributes(requests[1].payload)).toMatchObject({
+      "cc.tool_calls": JSON.stringify(batch.tool_calls),
+      "pinta.guard.decision": decision.toLowerCase(),
+      "pinta.guard.target": "tool_output",
+    });
+  });
+
+  it.each(["disabled", "missing endpoint"])("keeps %s batch-output guarding inactive", async (mode) => {
+    const batch = failedBatch(event);
+    if (mode === "disabled") vi.stubEnv("PINTA_GUARD_DISABLED", "1");
+    else vi.stubEnv("PINTA_GUARD_ENDPOINT", undefined);
+
+    expect(await handlePostToolUse(batch, config)).toBe(0);
+
+    expect(writes).toEqual([]);
+    expect(requests.map((request) => request.url)).toEqual([TRACES_ENDPOINT]);
+    expect(attributes(requests[0].payload)["cc.tool_calls"]).toBe(JSON.stringify(batch.tool_calls));
+    expect(Object.keys(attributes(requests[0].payload)).some((key) => key.startsWith("pinta.guard."))).toBe(false);
+  });
+
+  it("finishes a batch-output DENY even when queue persistence throws", async () => {
+    guardReply = async () => response("DENY");
+    vi.mocked(shared.deferPayload).mockImplementationOnce(() => {
+      expect(writes).toEqual([JSON.stringify(STOP) + "\n"]);
+      throw new Error("batch-output queue unavailable");
+    });
+
+    expect(await handlePostToolUse(failedBatch(event), config)).toBe(0);
+
+    expect(writes).toEqual([JSON.stringify(STOP) + "\n"]);
+    expect(requests.map((request) => request.url)).toEqual([GUARD_ENDPOINT]);
+    expect(errors.join("")).toContain("batch-output queue unavailable");
+    expect(shared.sendPayload).not.toHaveBeenCalled();
   });
 });
