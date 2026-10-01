@@ -14,6 +14,12 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 
 ## Channels
 
+Staging builds live on `staging/skax-a`, use the `skax` npm tag, and pin
+Core `0.9.3-skax.0`. Their masked findings distinguish returned content from
+completed inputs, including batch results. Consume them through an isolated
+staging catalog with the coordinated Manager build. Do not merge prerelease
+pins into `main`: marketplace auto-updates read that branch.
+
 | Channel | Install path | Auto-update |
 |---------|-------------|-------------|
 | **Pinta Manager v0.2+** | Manager installs and configures automatically | Yes — on manager reconcile |

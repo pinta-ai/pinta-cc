@@ -9,6 +9,28 @@ vi.mock('../../src/core/claude-version.js', () => ({
 }));
 
 describe('buildOtlpPayload (v1.2.0 — generic)', () => {
+  it.each(['ordinary', 'FAKE0NativeOutputCredential123456'])('scopes file and batch findings to actual returned content: %s', (output) => {
+    const secret = 'FAKE0NativeOutputCredential123456';
+    for (const batch of [false, true]) {
+      const toolInput = { command: 'echo ordinary', header: `Authorization: Bearer ${secret}` };
+      const payload = buildOtlpPayload({
+        traceId: '01HQXM7Y9YZJ8MK7Z6P3X1V8R0',
+        event: {
+          hook_event_name: batch ? 'PostToolBatch' : 'PostToolUse',
+          session_id: 'synthetic', transcript_path: '/synthetic/missing', cwd: '/synthetic',
+          ...(batch ? { tool_calls: [{ tool_name: 'Bash', tool_input: toolInput, tool_response: output }] }
+            : { tool_name: 'Read', tool_input: toolInput, tool_response: { file: { filePath: secret, content: output } } }),
+        },
+      });
+      const value = payload.resourceSpans[0].scopeSpans[0].spans[0].attributes.find((a) => a.key === 'pinta.facts')?.value;
+      if (!value || !('stringValue' in value)) throw new Error('Missing producer findings');
+      expect(JSON.parse(value.stringValue).items).toEqual([
+        expect.objectContaining({ secrets: expect.objectContaining({ count: 1, origins: [output === secret ? 'toolOutput' : 'attributes'] }) }),
+      ]);
+      expect(JSON.stringify(payload)).not.toContain(secret);
+    }
+  });
+
   it('produces resourceSpans with one span per call', () => {
     const payload = buildOtlpPayload({
       event: {
