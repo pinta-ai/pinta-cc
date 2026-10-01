@@ -111,6 +111,10 @@ export function isPermissionEvent(event: BaseEvent): event is PermissionEvent {
   );
 }
 
+export function isImportedCursorEvent(event: BaseEvent): boolean {
+  return typeof event.cursor_version === "string" && event.cursor_version.trim().length > 0;
+}
+
 // --- Skip-list (route to default no-op handler) ---
 
 const SKIP_HOOKS = new Set(["Notification", "TaskCreated", "TaskCompleted"]);

@@ -20,6 +20,7 @@ import {
   isSubagentEvent,
   isStopEvent,
   isPermissionEvent,
+  isImportedCursorEvent,
   isSkippedHook,
 } from "./core/types.js";
 import type { BaseEvent } from "./core/types.js";
@@ -48,10 +49,17 @@ export async function runHook(): Promise<number> {
   let exitCode = 0;
 
   try {
-    const config = loadConfig();
     const raw = await readStdin();
     const event: BaseEvent = JSON.parse(raw);
 
+    // Cursor can import ~/.claude/settings.json and execute this hook alongside
+    // its native hook. Native pinta-cursor owns those events to avoid duplicate
+    // guard decisions and telemetry.
+    if (isImportedCursorEvent(event)) {
+      return 0;
+    }
+
+    const config = loadConfig();
     if (isSkippedHook(event)) {
       exitCode = await handleDefault(event);
     } else if (isPreToolUseEvent(event)) {
