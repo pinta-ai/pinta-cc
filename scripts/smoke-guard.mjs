@@ -41,7 +41,7 @@ const server = http.createServer(async (request, response) => {
       } else {
         response.setHeader("content-type", "application/json");
         response.end(JSON.stringify({
-          decision: current.mode === "mask" ? "DENY" : current.mode ?? "DENY",
+          decision: ["mask", "withhold"].includes(current.mode) ? "DENY" : current.mode ?? "DENY",
           reason: `rule: ${canary}`,
           userMessage: message,
           durationMs: 1,
@@ -51,6 +51,8 @@ const server = http.createServer(async (request, response) => {
             outputAction: "mask",
             redactions: [{ category: "CREDENTIAL", match: sensitive }],
           } : {}),
+          // A manager 0.1.16+ DENY on content that cannot be masked.
+          ...(current.mode === "withhold" ? { evaluationId, outputAction: "withhold" } : {}),
         }));
       }
     } else {
@@ -89,20 +91,28 @@ function requests(result, url) {
 // outputAction) withholds the result behind `decision: "block"` and replaces it
 // through `updatedToolOutput`; a batch DENY has no replacement channel.
 function assertWithheld(result) {
+  if (result.event.hook_event_name === "PostToolBatch") {
+    // A batch blocks (ending the turn) only on an explicit manager withhold;
+    // a legacy DENY without outputAction produces no native response.
+    if (result.mode === "withhold") {
+      assert.deepEqual(JSON.parse(result.stdout), { decision: "block", reason: `${message} (evaluation ${evaluationId})` });
+    } else {
+      assert.equal(result.stdout, "", "a batch DENY without outputAction must not end the turn");
+    }
+    return;
+  }
   assert.equal(result.stdout.trim().split("\n").length, 1);
   const out = JSON.parse(result.stdout);
+  // An explicit withhold carries the manager's evaluation id in the notice.
+  const notice = result.mode === "withhold" ? `${message} (evaluation ${evaluationId})` : message;
   assert.ok(!("continue" in out), "output DENY must not stop the session");
   assert.ok(!result.stdout.includes(canary), "denied output must not reach stdout");
   assert.ok(!result.stdout.includes(sensitive));
-  if (result.event.hook_event_name === "PostToolBatch") {
-    assert.deepEqual(out, { decision: "block", reason: message });
-    return;
-  }
   assert.equal(out.decision, "block");
-  assert.equal(out.reason, message);
+  assert.equal(out.reason, notice);
   assert.equal(out.hookSpecificOutput.hookEventName, "PostToolUse");
   assert.ok(out.hookSpecificOutput.updatedToolOutput.startsWith("[Pinta withheld this tool output"));
-  assert.ok(out.hookSpecificOutput.updatedToolOutput.includes(message));
+  assert.ok(out.hookSpecificOutput.updatedToolOutput.includes(notice));
   assert.match(out.hookSpecificOutput.additionalContext, /^Pinta withheld this tool output/);
   assert.deepEqual(Object.keys(out).sort(), ["decision", "hookSpecificOutput", "reason"]);
 }
@@ -119,7 +129,8 @@ function assertMasked(result) {
   assert.ok(text.length <= 10_000);
   assert.ok(!result.stdout.includes(sensitive), "the matched value must be masked everywhere on stdout");
   assert.ok(out.hookSpecificOutput.additionalContext.startsWith(`${message} (evaluation ${evaluationId})\n`));
-  assert.ok(out.hookSpecificOutput.additionalContext.includes("Pinta masked 1 detected value(s)"));
+  assert.ok(out.hookSpecificOutput.additionalContext.includes("Pinta flagged 1 credential or personal-data value(s)"));
+  assert.ok(!out.hookSpecificOutput.additionalContext.includes("Pinta masked"));
 }
 
 function assertDeny(result) {
@@ -313,10 +324,17 @@ try {
     assertDeny(masked);
     assertEvidence(masked, "deny");
     assert.deepEqual(masked.timeline, ["guard", "response"]);
-    // A batch DENY ignores mask advice: no replacement channel, notice only.
+    // A batch DENY ignores mask advice: no replacement channel and no turn
+    // stop; the evidence is still deferred. Only an explicit withhold blocks.
     const maskedBatch = await run(entry, endpoint, { hook: "PostToolBatch", mode: "mask" });
-    assert.deepEqual(JSON.parse(maskedBatch.stdout), { decision: "block", reason: `${message} (evaluation ${evaluationId})` });
+    assert.equal(maskedBatch.stdout, "");
     assertEvidence(maskedBatch, "deny");
+    const withheldBatch = await run(entry, endpoint, { hook: "PostToolBatch", mode: "withhold" });
+    assert.deepEqual(JSON.parse(withheldBatch.stdout), { decision: "block", reason: `${message} (evaluation ${evaluationId})` });
+    assertEvidence(withheldBatch, "deny");
+    const withheldOutput = await run(entry, endpoint, { mode: "withhold" });
+    assertDeny(withheldOutput);
+    assertEvidence(withheldOutput, "deny");
 
     for (const hook of ["PostToolUse", "PreToolUse", "PermissionRequest", "PostToolBatch"]) {
       for (const mode of ["ALLOW", "REVIEW", "error", "malformed"]) {

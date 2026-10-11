@@ -10,7 +10,7 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 - **Retry queue**: DENY and transport-failure spans are persisted to `.plugin-data/failed-spans.jsonl` (cap 1000) and flushed by a later eligible telemetry hook
 - **Vendor-neutral**: any OTel-compatible collector works. Pinta Manager auto-configures the endpoint and token
 - **Identity at relay**: `member.identity.*` attributes are no longer attached at plugin time. Pinta Manager (or your own pipeline) attaches identity at the forwarding layer
-- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; masks or withholds denied output at `PostToolUse` (session keeps going, the model gets the policy message) and blocks denied model-facing batch results (including failures) at `PostToolBatch`
+- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; masks or withholds denied output at `PostToolUse` (session keeps going, the model gets the policy message) and blocks model-facing batch results (including failures) at `PostToolBatch` only when the manager says the content cannot be masked
 
 ## Channels
 
@@ -130,10 +130,22 @@ the original output with only those values replaced by
 `[REDACTED:<category>]`, through Claude Code's
 [`updatedToolOutput`](https://code.claude.com/docs/en/hooks#json-output)
 replacement channel, and the notice + guidance as `additionalContext`. No
-`decision` is set, so the turn simply continues with the masked text:
+`decision` is set, so the turn simply continues.
+
+> **Measured host limitation (1.11.1).** Claude Code 2.1.286 and 2.1.296 were
+> observed to ignore `hookSpecificOutput.updatedToolOutput` for built-in tools
+> (Read, Bash): the `additionalContext` reached the model but the original,
+> unmasked result did too, in both interactive and `claude -p` sessions and with
+> the field at either level. Until Claude Code applies the replacement, a mask
+> DENY therefore means *notice + original output*. The Claude Code-specific
+> guidance accounts for that: it names the finding, tells the model to treat
+> the values as sensitive (do not repeat, store or send them) and to continue
+> without them, instead of claiming a replacement the host may not have made.
+> The `updatedToolOutput` field is still emitted so a fixed host picks it up
+> without an adaptor change.
 
 ```json
-{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"<output with [REDACTED:CREDENTIAL]>","additionalContext":"<policy userMessage> (evaluation <id>)\nPinta masked 1 detected value(s) in this output as [REDACTED:<type>]. The tool already ran; continue with the masked text. ..."}}
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"<output with [REDACTED:CREDENTIAL]>","additionalContext":"<policy userMessage> (evaluation <id>)\nPinta flagged 1 credential or personal-data value(s) in this output. If the host did not replace the output and you still see them, treat them as sensitive: do not repeat, store or send them anywhere, and continue the task without them. ..."}}
 ```
 
 **Withhold** — everything else: an older manager (< 0.1.16, no
@@ -153,9 +165,16 @@ text into `userMessage` for output inspections, and the detected values travel
 only in the synchronous loopback response — they are never written to the span,
 the retry queue or stderr.
 
-`PostToolBatch` has no replacement channel, so a batch DENY emits
-`{"decision":"block","reason":"<notice>"}` only, even when the manager
-suggested a mask.
+`PostToolBatch` has no replacement channel, and its `decision: "block"` does
+not merely feed the model a reason — Claude Code ends the whole turn
+(`PostToolBatch hook stopped continuation`, measured on 2.1.286). Because the
+batch re-judges results that `PostToolUse` already handled, a batch DENY
+blocks **only when the manager explicitly answered `outputAction: "withhold"`**
+(content that cannot be masked, such as prompt injection in a failed result):
+`{"decision":"block","reason":"<notice>"}`. A mask advice, or a manager that
+sends no `outputAction` (< 0.1.16), produces no native response at all — the
+turn continues and the DENY evidence is still deferred to the retry queue.
+Failed-result containment on such managers is therefore observation-only.
 
 **Host requirements.** `updatedToolOutput` requires **Claude Code ≥ 2.1.265**,
 works for **built-in tools only** (MCP tool results are not replaced; for those

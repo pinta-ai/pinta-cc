@@ -12,6 +12,19 @@ import { buildEventPayload, deferPayload, emitEvent, sendPayload } from "./share
 // rather than being handed a silently shortened one.
 export const UPDATED_TOOL_OUTPUT_LIMIT = 9_900;
 
+/**
+ * Claude Code-specific mask guidance. The shared core copy says the output was
+ * masked, but Claude Code 2.1.286 and 2.1.296 were measured to ignore
+ * `updatedToolOutput` for built-in tools (Read, Bash), so the model may still
+ * hold the original text. The hint therefore names the finding and tells the
+ * model how to behave either way, instead of asserting a replacement the host
+ * may not have applied (PTA-695).
+ */
+export function CC_MASK_GUIDANCE(maskedCount: number, evaluationId?: string): string {
+  const id = evaluationId ?? "id unavailable";
+  return `Pinta flagged ${maskedCount} credential or personal-data value(s) in this output. If the host did not replace the output and you still see them, treat them as sensitive: do not repeat, store or send them anywhere, and continue the task without them. If such a value is required, ask the user for it instead of trying to reveal it. If this looks like a false positive, tell the user and have them report evaluation ${id}.`;
+}
+
 export async function handlePostToolUse(
   event: PostToolUseEvent | PostToolUseFailureEvent | PostToolBatchEvent,
   config: PintaConfig,
@@ -30,7 +43,8 @@ export async function handlePostToolUse(
   // (PTA-695). Printed before any telemetry: a host timeout can discard even an
   // already-written response if the hook then waits on a collector.
   if (guard?.decision === "DENY") {
-    process.stdout.write(JSON.stringify(outputDenialResponse(event, guard)) + "\n");
+    const native = outputDenialResponse(event, guard);
+    if (native) process.stdout.write(JSON.stringify(native) + "\n");
   }
 
   try {
@@ -66,14 +80,20 @@ export async function handlePostToolUse(
  *   in the text): `decision: "block"` puts the notice in front of the model as
  *   the block reason, and `updatedToolOutput` replaces the original result with
  *   the withheld line so the denied content is not delivered either way.
- * - PostToolBatch has no replacement channel: `decision: "block"` with the
- *   notice only.
+ * - PostToolBatch has no replacement channel and its `decision: "block"` ends
+ *   the whole turn (measured on Claude Code 2.1.286: "hook stopped
+ *   continuation"). The batch re-judges results that `PostToolUse` already
+ *   handled, so it blocks only when the manager explicitly answered
+ *   `outputAction: "withhold"` (content that cannot be masked, e.g. prompt
+ *   injection in a failed result). A mask advice, or a manager that sends no
+ *   `outputAction`, produces no native response: evidence is still deferred.
  */
 function outputDenialResponse(
   event: PostToolUseEvent | PostToolBatchEvent,
   guard: GuardResult,
-): Record<string, unknown> {
+): Record<string, unknown> | null {
   if (event.hook_event_name === "PostToolBatch") {
+    if (guard.outputAction !== "withhold") return null;
     return { decision: "block", reason: buildNotice(guard.userMessage, guard.evaluationId) };
   }
 
@@ -88,7 +108,7 @@ function outputDenialResponse(
       hookSpecificOutput: {
         hookEventName: "PostToolUse",
         updatedToolOutput: denial.text,
-        additionalContext: `${denial.notice}\n${denial.guidance}`,
+        additionalContext: `${denial.notice}\n${CC_MASK_GUIDANCE(denial.maskedCount, guard.evaluationId)}`,
       },
     };
   }
