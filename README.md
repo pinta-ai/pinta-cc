@@ -10,7 +10,7 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 - **Retry queue**: DENY and transport-failure spans are persisted to `.plugin-data/failed-spans.jsonl` (cap 1000) and flushed by a later eligible telemetry hook
 - **Vendor-neutral**: any OTel-compatible collector works. Pinta Manager auto-configures the endpoint and token
 - **Identity at relay**: `member.identity.*` attributes are no longer attached at plugin time. Pinta Manager (or your own pipeline) attaches identity at the forwarding layer
-- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; stops denied successful output at `PostToolUse` and model-facing batch results (including failures) at `PostToolBatch`
+- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; masks or withholds denied output at `PostToolUse` (session keeps going, the model gets the policy message) and blocks denied model-facing batch results (including failures) at `PostToolBatch`
 
 ## Channels
 
@@ -99,10 +99,10 @@ denial as a prevented tool call rather than a completed tool with denied output.
 The target is retained as original extension metadata.
 
 **Failed results require `PostToolBatch`.** In native Claude Code 2.1.267,
-`PostToolUseFailure` receives the error but ignores a parsed `continue: false`;
+`PostToolUseFailure` receives the error but ignores a parsed hook decision;
 the next model request still receives that error. `PostToolBatch` runs before
 the next model call, carries model-facing results for all calls (including
-failed calls), and honors the run-stop response. The adapter therefore keeps
+failed calls), and honors `decision: "block"`. The adapter therefore keeps
 the failure event observation-only and gates the batch without cross-process
 pending-decision state. A batch is a separate native event and may re-evaluate
 successful results already checked at `PostToolUse`.
@@ -113,19 +113,63 @@ register this synchronous hook, and the Manager/guard must project
 inputs as new commands. Updating only the adapter is insufficient. Hosts
 without a working batch hook have no failed-result enforcement guarantee.
 
+### What the model receives on an output `DENY`
+
 On an output `DENY`, the hook exits successfully and emits exactly one JSON
-object before best-effort local persistence:
+object before best-effort local persistence. **The session is not stopped.**
+The tool already ran, so instead of ending the run the hook replaces the
+denied result and tells the model what happened, using the policy's own
+message (the manager's `userMessage`, with its `evaluationId` when the manager
+sends one) plus a fixed recovery hint. The denied content itself is never
+delivered unmasked. Two outcomes exist, chosen by the manager:
+
+**Mask** — the manager (0.1.16+) answered `outputAction: "mask"` with the
+detected values (`redactions`), because every signal the matched rule read
+carried a concrete value (a credential, a phone number, ...). The model gets
+the original output with only those values replaced by
+`[REDACTED:<category>]`, through Claude Code's
+[`updatedToolOutput`](https://code.claude.com/docs/en/hooks#json-output)
+replacement channel, and the notice + guidance as `additionalContext`. No
+`decision` is set, so the turn simply continues with the masked text:
 
 ```json
-{"continue":false,"stopReason":"Pinta blocked this tool output. Start a new session before continuing."}
+{"hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"<output with [REDACTED:CREDENTIAL]>","additionalContext":"<policy userMessage> (evaluation <id>)\nPinta masked 1 detected value(s) in this output as [REDACTED:<type>]. The tool already ran; continue with the masked text. ..."}}
 ```
 
-This uses Claude Code's documented
-[`continue: false` / `stopReason` contract](https://code.claude.com/docs/en/hooks#json-output)
-to stop the current run, including when a tool completes during streaming.
-`PostToolUse` exit code 2 only provides stderr feedback, and `decision: "block"`
-alone is not this run-stop contract. The fixed message never copies tool output
-or guard-supplied reasons/messages into the conversation.
+**Withhold** — everything else: an older manager (< 0.1.16, no
+`outputAction`), an explicit `outputAction: "withhold"` (the rule fired on a
+value-less signal such as prompt injection, or a package deny), or a mask whose
+values do not occur in the returned text. The result is replaced by a single
+withheld line and the notice is put in front of the model as the block reason:
+
+```json
+{"decision":"block","reason":"<policy userMessage> (evaluation <id>)","hookSpecificOutput":{"hookEventName":"PostToolUse","updatedToolOutput":"[Pinta withheld this tool output — <policy userMessage> (evaluation <id>)]","additionalContext":"Pinta withheld this tool output because its content matched a blocking policy that cannot be masked. The tool already ran; do not retry it to bypass the block ..."}}
+```
+
+When the manager sends no `userMessage` the notice is
+`Pinta blocked this tool output under your organization's security policy.`.
+The notice never quotes the tool output: manager 0.1.16+ stops copying matched
+text into `userMessage` for output inspections, and the detected values travel
+only in the synchronous loopback response — they are never written to the span,
+the retry queue or stderr.
+
+`PostToolBatch` has no replacement channel, so a batch DENY emits
+`{"decision":"block","reason":"<notice>"}` only, even when the manager
+suggested a mask.
+
+**Host requirements.** `updatedToolOutput` requires **Claude Code ≥ 2.1.265**,
+works for **built-in tools only** (MCP tool results are not replaced; for those
+the withhold `decision: "block"` and the mask `additionalContext` still reach
+the model, but the original MCP result is not altered — the mcp-logger adaptor
+covers that path), and is capped at **10,000 characters**. A masked output
+longer than that is cut at 9,900 characters and ends with
+` …[truncated by Pinta: <n> more characters]`, so the model sees that it holds a
+partial result rather than a silently shortened one. On an older Claude Code
+the `hookSpecificOutput` fields are ignored; the withhold `decision: "block"`
+still applies, while a mask response then leaves the original output in place.
+The model-facing text is recovered from the native `tool_response` shape:
+Bash `stdout` + `stderr`, Read `file.content`, `content[].text` blocks joined
+with newlines, a plain string, or the JSON of anything else.
 
 **Decided DENYs never wait for collector network IO.** `PreToolUse`,
 `PermissionRequest`, `PostToolUse` and `PostToolBatch` write their native
@@ -146,13 +190,15 @@ uses the existing redaction, payload-size and 1000-entry retention limits.
 Queue write failures, oversized drops and oldest-entry eviction are diagnosed
 on stderr; they do not suppress the response or trigger a network fallback.
 
-**Start a new session after an output denial.** The tool already ran: this does
-not undo its effects, remove native results from the retained transcript, or
-make resuming/continuing that conversation safe. There is no automatic clearing
-or persistent session lock.
+**What an output denial does not do.** The tool already ran: the hook does not
+undo its effects. It replaces what the model receives for that result; it does
+not rewrite earlier transcript content, clear context, or lock the session.
+The guidance text asks the model to tell the user what was masked or withheld,
+not to retry the tool to get around the block, and to have the user report the
+`evaluationId` when the detection looks wrong.
 
-`ALLOW`, `REVIEW`, inactive guarding and existing guard fail-open paths do not
-stop the run. `PermissionRequest` now evaluates the original permission span
+`ALLOW`, `REVIEW`, inactive guarding and existing guard fail-open paths emit
+nothing. `PermissionRequest` now evaluates the original permission span
 and emits `hookSpecificOutput.decision = {behavior: "deny", message: ...}` on
 DENY. Other decisions emit nothing: they do not automatically approve a
 native permission request. `PermissionDenied`, session, lifecycle and internal
@@ -160,7 +206,8 @@ events keep their existing observation behavior, as does the `PreToolUse`
 permission-denial response.
 
 Enforcement requires synchronous hooks and a Claude Code host honoring the
-documented `PostToolUse`/`PostToolBatch` stop contracts. The hook must finish within its host
+documented `PostToolUse` decision/`updatedToolOutput` and `PostToolBatch`
+decision contracts. The hook must finish within its host
 timeout: Claude Code [discards timed-out hook output](https://code.claude.com/docs/en/hooks#timeouts).
 Guard evaluation and local storage must still fit that deadline; removing
 collector IO from decided DENYs does not make those operations instantaneous.
