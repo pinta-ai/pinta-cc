@@ -2,6 +2,29 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.1] - 2026-10-12
+
+### Changed
+
+- `PostToolBatch` DENY blocks only on an explicit manager
+  `outputAction: "withhold"`. Claude Code treats a batch `decision: "block"`
+  as a run stop ("hook stopped continuation", measured on 2.1.286), and the
+  batch re-judges results `PostToolUse` already handled, so a mask advice or
+  a manager that sends no `outputAction` now produces no native response; the
+  DENY evidence is still deferred (PTA-695).
+- Claude Code-specific mask guidance in `additionalContext`. Claude Code
+  2.1.286 and 2.1.296 were measured to ignore `updatedToolOutput` for built-in
+  tools, so the hint no longer claims the output was masked: it names the
+  finding and tells the model to treat the values as sensitive and continue
+  without them. `updatedToolOutput` is still emitted for a host that applies
+  it.
+
+### Compatibility
+
+- No manager, policy, timeout or dependency change. Manager < 0.1.16 (no
+  `outputAction`) no longer stops the turn on a batch DENY; its output DENYs
+  still withhold with the policy message.
+
 ## [1.11.0] - 2026-10-11
 
 ### Changed
