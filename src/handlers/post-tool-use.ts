@@ -1,4 +1,4 @@
-import { attachGuard, buildNotice, buildOutputDenial } from "@pinta-ai/core";
+import { attachGuard, buildOutputDenial } from "@pinta-ai/core";
 import type { GuardResult } from "@pinta-ai/core";
 import type { PintaConfig } from "../core/config.js";
 import type { PostToolBatchEvent, PostToolUseEvent, PostToolUseFailureEvent } from "../core/types.js";
@@ -30,7 +30,8 @@ export async function handlePostToolUse(
   config: PintaConfig,
 ): Promise<number> {
   if (event.hook_event_name === "PostToolUseFailure") {
-    // Claude ignores a run-stop on this event; PostToolBatch gates its result.
+    // Claude ignores a hook decision on this event, and since 1.11.2 the batch
+    // does not gate it either: failed results are observation-only.
     await emitEvent(event, config);
     return 0;
   }
@@ -80,22 +81,19 @@ export async function handlePostToolUse(
  *   in the text): `decision: "block"` puts the notice in front of the model as
  *   the block reason, and `updatedToolOutput` replaces the original result with
  *   the withheld line so the denied content is not delivered either way.
- * - PostToolBatch has no replacement channel and its `decision: "block"` ends
- *   the whole turn (measured on Claude Code 2.1.286: "hook stopped
- *   continuation"). The batch re-judges results that `PostToolUse` already
- *   handled, so it blocks only when the manager explicitly answered
- *   `outputAction: "withhold"` (content that cannot be masked, e.g. prompt
- *   injection in a failed result). A mask advice, or a manager that sends no
- *   `outputAction`, produces no native response: evidence is still deferred.
+ * - PostToolBatch never answers (1.11.2). It has no replacement channel and
+ *   Claude Code treats its `decision: "block"` as a run stop ("hook stopped
+ *   continuation", measured on 2.1.286 and 2.1.296), so even an explicit
+ *   `outputAction: "withhold"` ends the user's turn — a cost every injection
+ *   false positive would pay. The batch only re-judges results `PostToolUse`
+ *   already handled, so the model keeps the per-tool notice and guidance, the
+ *   turn goes on, and the batch DENY evidence is still deferred.
  */
 function outputDenialResponse(
   event: PostToolUseEvent | PostToolBatchEvent,
   guard: GuardResult,
 ): Record<string, unknown> | null {
-  if (event.hook_event_name === "PostToolBatch") {
-    if (guard.outputAction !== "withhold") return null;
-    return { decision: "block", reason: buildNotice(guard.userMessage, guard.evaluationId) };
-  }
+  if (event.hook_event_name === "PostToolBatch") return null;
 
   const denial = buildOutputDenial({
     original: returnedText(event.tool_response),

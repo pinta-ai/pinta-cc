@@ -10,7 +10,7 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 - **Retry queue**: DENY and transport-failure spans are persisted to `.plugin-data/failed-spans.jsonl` (cap 1000) and flushed by a later eligible telemetry hook
 - **Vendor-neutral**: any OTel-compatible collector works. Pinta Manager auto-configures the endpoint and token
 - **Identity at relay**: `member.identity.*` attributes are no longer attached at plugin time. Pinta Manager (or your own pipeline) attaches identity at the forwarding layer
-- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; masks or withholds denied output at `PostToolUse` (session keeps going, the model gets the policy message) and blocks model-facing batch results (including failures) at `PostToolBatch` only when the manager says the content cannot be masked
+- **Optional guard enforcement**: denies tool input at `PreToolUse` and `PermissionRequest`; masks or withholds denied output at `PostToolUse` (session keeps going, the model gets the policy message). `PostToolBatch` results are evaluated and recorded but never block: a batch block ends the user's turn in Claude Code
 
 ## Channels
 
@@ -98,20 +98,19 @@ this adapter in managed installations. Older readers can interpret every guard
 denial as a prevented tool call rather than a completed tool with denied output.
 The target is retained as original extension metadata.
 
-**Failed results require `PostToolBatch`.** In native Claude Code 2.1.267,
+**Failed results are observation-only.** In native Claude Code 2.1.267,
 `PostToolUseFailure` receives the error but ignores a parsed hook decision;
 the next model request still receives that error. `PostToolBatch` runs before
-the next model call, carries model-facing results for all calls (including
-failed calls), and honors `decision: "block"`. The adapter therefore keeps
-the failure event observation-only and gates the batch without cross-process
-pending-decision state. A batch is a separate native event and may re-evaluate
-successful results already checked at `PostToolUse`.
+the next model call and carries model-facing results for all calls (including
+failed calls), but its `decision: "block"` is a run stop, not a reason the
+model reads (see below), so since 1.11.2 the adapter evaluates and records the
+batch without ever answering it. A batch is a separate native event and
+re-evaluates successful results already checked at `PostToolUse`.
 
-The plugin registers `PostToolBatch`. Managed/direct installations must also
-register this synchronous hook, and the Manager/guard must project
+The plugin registers `PostToolBatch` for that evidence. Managed/direct
+installations must also register this hook, and the Manager/guard must project
 `cc.tool_calls[].tool_response` as **output**, not interpret the batch's tool
-inputs as new commands. Updating only the adapter is insufficient. Hosts
-without a working batch hook have no failed-result enforcement guarantee.
+inputs as new commands.
 
 ### What the model receives on an output `DENY`
 
@@ -167,14 +166,16 @@ the retry queue or stderr.
 
 `PostToolBatch` has no replacement channel, and its `decision: "block"` does
 not merely feed the model a reason — Claude Code ends the whole turn
-(`PostToolBatch hook stopped continuation`, measured on 2.1.286). Because the
-batch re-judges results that `PostToolUse` already handled, a batch DENY
-blocks **only when the manager explicitly answered `outputAction: "withhold"`**
-(content that cannot be masked, such as prompt injection in a failed result):
-`{"decision":"block","reason":"<notice>"}`. A mask advice, or a manager that
-sends no `outputAction` (< 0.1.16), produces no native response at all — the
-turn continues and the DENY evidence is still deferred to the retry queue.
-Failed-result containment on such managers is therefore observation-only.
+(`PostToolBatch hook stopped continuation`, measured on 2.1.286 and 2.1.296)
+and the user has to prompt again. Every prompt-injection false positive would
+pay that cost, and the batch only re-judges results that `PostToolUse` already
+handled, so since 1.11.2 **a batch DENY never produces a native response**,
+whatever the manager advised (mask, explicit `outputAction: "withhold"`, or
+nothing). The turn continues with the per-tool notice and guidance the model
+already received, and the batch DENY evidence is still deferred to the retry
+queue. Containment of a denied output on Claude Code therefore rests on the
+`PostToolUse` response and on the `PreToolUse` guard catching whatever the
+model attempts next; it is not a turn stop.
 
 **Host requirements.** `updatedToolOutput` requires **Claude Code ≥ 2.1.265**,
 works for **built-in tools only** (MCP tool results are not replaced; for those
