@@ -35,9 +35,6 @@ const WITHHELD = {
     additionalContext: GUIDANCE_WITHHOLD(),
   },
 };
-/** PostToolBatch blocks (and ends the turn) only on an explicit manager withhold. */
-const BATCH_BLOCK = { decision: "block", reason: `${USER_MESSAGE} (evaluation ${EVALUATION_ID})` };
-
 function span(payload: OtlpPayload) {
   return payload.resourceSpans[0].scopeSpans[0].spans[0];
 }
@@ -472,7 +469,7 @@ describe("handlePostToolUse — native output enforcement", () => {
     expect(fs.existsSync(path.join(config.pluginData, "failed-spans.jsonl"))).toBe(false);
   });
 
-  it("keeps the nonblocking failure event observation-only; PostToolBatch owns its gate", async () => {
+  it("keeps the nonblocking failure event observation-only", async () => {
     const { tool_response: _output, ...base } = event;
 
     expect(await handlePostToolUse({
@@ -504,8 +501,9 @@ describe("handlePostToolUse — native output enforcement", () => {
     expect(await handlePostToolUse(batch, config)).toBe(0);
 
     expect(guard.evaluateGuard).toHaveBeenCalledOnce();
-    // No outputAction: the batch does not end the turn (PostToolUse already
-    // judged each successful result); the DENY evidence is still deferred.
+    // A batch never answers (PostToolUse already judged each successful
+    // result and a batch block would end the turn); the DENY evidence is
+    // still deferred.
     expect(writes).toEqual([]);
     expect(requests.map((request) => request.url)).toEqual([GUARD_ENDPOINT]);
     const judged = requests[0].payload;
@@ -540,17 +538,21 @@ describe("handlePostToolUse — native output enforcement", () => {
     expect(JSON.stringify(new DiskRetryQueue(config.pluginData, "pinta-cc").readAll())).not.toContain(SENSITIVE);
   });
 
-  it("blocks a batch only on an explicit withhold: the turn ends with the notice as reason", async () => {
+  it("never blocks a batch: an explicit withhold produces no native response and the turn goes on", async () => {
     guardReply = async () => response("DENY", { evaluationId: EVALUATION_ID, outputAction: "withhold" });
 
     expect(await handlePostToolUse(failedBatch(event), config)).toBe(0);
 
-    expect(stdoutJson()).toEqual(BATCH_BLOCK);
-    expect(JSON.parse(writes[0])).not.toHaveProperty("continue");
-    expect(JSON.parse(writes[0])).not.toHaveProperty("hookSpecificOutput");
-    expect(writes[0]).not.toContain(CANARY);
+    expect(writes).toEqual([]);
     expect(shared.deferPayload).toHaveBeenCalledOnce();
     expect(shared.sendPayload).not.toHaveBeenCalled();
+    const queued = new DiskRetryQueue(config.pluginData, "pinta-cc").readAll();
+    expect(queued).toHaveLength(1);
+    expect(attributes(queued[0].payload)).toMatchObject({
+      "cc.hook": "PostToolBatch",
+      "pinta.guard.decision": "deny",
+      "pinta.guard.target": "tool_output",
+    });
   });
 
   it.each(["ALLOW", "REVIEW"])("preserves %s on batch output without a response", async (decision) => {
@@ -584,13 +586,12 @@ describe("handlePostToolUse — native output enforcement", () => {
   it("finishes a batch-output DENY even when queue persistence throws", async () => {
     guardReply = async () => response("DENY", { evaluationId: EVALUATION_ID, outputAction: "withhold" });
     vi.mocked(shared.deferPayload).mockImplementationOnce(() => {
-      expect(writes).toEqual([JSON.stringify(BATCH_BLOCK) + "\n"]);
       throw new Error("batch-output queue unavailable");
     });
 
     expect(await handlePostToolUse(failedBatch(event), config)).toBe(0);
 
-    expect(writes).toEqual([JSON.stringify(BATCH_BLOCK) + "\n"]);
+    expect(writes).toEqual([]);
     expect(requests.map((request) => request.url)).toEqual([GUARD_ENDPOINT]);
     expect(errors.join("")).toContain("batch-output queue unavailable");
     expect(shared.sendPayload).not.toHaveBeenCalled();

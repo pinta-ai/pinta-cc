@@ -2,6 +2,25 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.2] - 2026-10-12
+
+### Changed
+
+- `PostToolBatch` DENY never produces a native response. 1.11.1 still answered
+  `decision: "block"` on an explicit manager `outputAction: "withhold"`
+  (prompt injection), which Claude Code treats as a run stop
+  (`PostToolBatch hook stopped continuation`, measured on 2.1.286 and 2.1.296)
+  and so cost the user a turn on every injection false positive. The batch only
+  re-judges results `PostToolUse` already handled, so the hook now stays silent
+  on every batch verdict: the model keeps the per-tool notice and guidance, the
+  turn continues, and the batch DENY evidence is still deferred (PTA-695).
+
+### Compatibility
+
+- No manager, policy, timeout or dependency change. Denied tool outputs on
+  Claude Code are now never a turn stop; containment rests on the
+  `PostToolUse` response and the `PreToolUse` guard.
+
 ## [1.11.1] - 2026-10-12
 
 ### Changed

@@ -89,16 +89,11 @@ function requests(result, url) {
 
 // Output DENY (PTA-695): the session is not stopped. An old-style DENY (no
 // outputAction) withholds the result behind `decision: "block"` and replaces it
-// through `updatedToolOutput`; a batch DENY has no replacement channel.
+// through `updatedToolOutput`; a batch DENY never answers (1.11.2): a batch
+// `decision: "block"` would end the turn, and PostToolUse already judged it.
 function assertWithheld(result) {
   if (result.event.hook_event_name === "PostToolBatch") {
-    // A batch blocks (ending the turn) only on an explicit manager withhold;
-    // a legacy DENY without outputAction produces no native response.
-    if (result.mode === "withhold") {
-      assert.deepEqual(JSON.parse(result.stdout), { decision: "block", reason: `${message} (evaluation ${evaluationId})` });
-    } else {
-      assert.equal(result.stdout, "", "a batch DENY without outputAction must not end the turn");
-    }
+    assert.equal(result.stdout, "", "a batch DENY must not end the turn");
     return;
   }
   assert.equal(result.stdout.trim().split("\n").length, 1);
@@ -324,13 +319,14 @@ try {
     assertDeny(masked);
     assertEvidence(masked, "deny");
     assert.deepEqual(masked.timeline, ["guard", "response"]);
-    // A batch DENY ignores mask advice: no replacement channel and no turn
-    // stop; the evidence is still deferred. Only an explicit withhold blocks.
+    // A batch DENY never answers, whatever the manager advises (mask, explicit
+    // withhold, or nothing): no replacement channel, no turn stop; the
+    // evidence is still deferred.
     const maskedBatch = await run(entry, endpoint, { hook: "PostToolBatch", mode: "mask" });
     assert.equal(maskedBatch.stdout, "");
     assertEvidence(maskedBatch, "deny");
     const withheldBatch = await run(entry, endpoint, { hook: "PostToolBatch", mode: "withhold" });
-    assert.deepEqual(JSON.parse(withheldBatch.stdout), { decision: "block", reason: `${message} (evaluation ${evaluationId})` });
+    assert.equal(withheldBatch.stdout, "", "an explicit withhold must not end the turn on a batch");
     assertEvidence(withheldBatch, "deny");
     const withheldOutput = await run(entry, endpoint, { mode: "withhold" });
     assertDeny(withheldOutput);
@@ -398,7 +394,7 @@ try {
       if (!skipped) assert.ok(!Object.keys(attributes(sent[0])).some((key) => key.startsWith("pinta.guard.")));
     }
   }
-  console.log(`[smoke:guard] OK: ${verified} isolated CJS/ESM stdin runs; pre/permission/success/batch DENY exits within 1s despite 4s collector ACK, no collector IO, output DENY withholds or masks without stopping the session, original masked spans queued then flushed, failure diagnostics and non-DENY/lifecycle boundaries`);
+  console.log(`[smoke:guard] OK: ${verified} isolated CJS/ESM stdin runs; pre/permission/success/batch DENY exits within 1s despite 4s collector ACK, no collector IO, output DENY withholds or masks without stopping the session, batch DENY never answers, original masked spans queued then flushed, failure diagnostics and non-DENY/lifecycle boundaries`);
 } finally {
   server.closeAllConnections();
   await new Promise((resolve) => server.close(resolve));
