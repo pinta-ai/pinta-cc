@@ -2,6 +2,48 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.0] - 2026-10-11
+
+### Changed
+
+- An output `DENY` at `PostToolUse` no longer stops the session. The hook now
+  replaces the denied result and hands the model the policy's own message
+  (the manager's `userMessage`, plus `evaluationId` when sent) with a fixed
+  recovery hint, instead of the former fixed `continue: false` /
+  "Start a new session" stop (PTA-695).
+- **Mask**: when the manager answers `outputAction: "mask"` with the detected
+  values, the original output is delivered through Claude Code's
+  `hookSpecificOutput.updatedToolOutput` with only those values replaced by
+  `[REDACTED:<category>]`; the notice and guidance ride in `additionalContext`
+  and the turn continues.
+- **Withhold**: otherwise the result is replaced by
+  `[Pinta withheld this tool output — <notice>]` behind `decision: "block"`,
+  with the notice as `reason` and the withhold guidance as `additionalContext`.
+- `PostToolBatch` DENY emits `{"decision":"block","reason":<notice>}` only;
+  the batch has no replacement channel and ignores mask advice.
+- Masked text is cut at 9,900 characters with a visible
+  ` …[truncated by Pinta: <n> more characters]` marker so the final
+  `updatedToolOutput` stays within Claude Code's 10,000-character cap.
+- The model-facing text is recovered from the native `tool_response` shape
+  (`stdout`+`stderr`, `file.content`, `content[].text`, string, else JSON).
+- Bundle `@pinta-ai/core` `^0.10.0` (`buildOutputDenial`, `GuardResult`
+  `evaluationId` / `outputAction` / `redactions`). Guard User-Agent
+  `pinta-cc/1.11.0`.
+
+### Compatibility
+
+- Manager < 0.1.16 (no `outputAction`) → every output DENY withholds, with the
+  policy `userMessage` as the notice. No manager change is required to keep
+  denying; masking needs manager 0.1.16+.
+- `updatedToolOutput` requires Claude Code ≥ 2.1.265 and applies to built-in
+  tools only (10,000-character cap). Older hosts ignore it: a withhold still
+  blocks via `decision: "block"`; a mask then leaves the original result as is.
+- Unchanged: exactly one stdout JSON line written before any telemetry,
+  `pinta.guard.target = "tool_output"`, decided DENYs persist the original
+  redacted span locally without collector IO, exit 0, `PreToolUse` /
+  `PermissionRequest` responses, ALLOW/REVIEW/fail-open paths. The manager's
+  `redactions` are never copied onto the span, the retry queue or stderr.
+
 ## [1.10.2] - 2026-09-30
 
 ### Fixed

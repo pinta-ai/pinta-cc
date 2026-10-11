@@ -132,7 +132,10 @@ try {
     assert.equal(JSON.parse(cache)[0].version, expected);
 
     const second = await run(entry, env, "PostToolUse");
-    assert.equal(JSON.parse(second.stdout).continue, false);
+    // Output DENY without `outputAction` (this fixture) withholds behind
+    // `decision: "block"`; it no longer stops the session (PTA-695).
+    assert.equal(JSON.parse(second.stdout).decision, "block");
+    assert.ok(!("continue" in JSON.parse(second.stdout)));
     assert.equal(second.stderr, "");
     assert.equal(payloads.length, before + 1);
     assert.equal(queued(data).length, 1);
