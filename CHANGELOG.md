@@ -2,6 +2,16 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.4-pta843.2] - 2026-10-26
+
+### Fixed
+
+- Consume Core `0.11.1-pta843.1`: storing a Fetch result on an unrelated static
+  browser-global property is not treated as rebinding Fetch. Explicit binding,
+  global-alias and reflective mutation paths remain unresolved and protected.
+- Extend all three native hooks in CJS and ESM with result-storage and binding
+  counterexamples. Retain the bundled parser notice and prerelease-only channel.
+
 ## [1.11.4-pta843.1] - 2026-10-26
 
 ### Fixed

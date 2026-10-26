@@ -101,14 +101,21 @@ try {
   for (const entry of ["index.js", "index.mjs"]) {
     for (const hook of ["PreToolUse", "PostToolUse", "PostToolBatch"]) {
       for (const mode of ["omit", "same-origin", "include"]) {
-        const result = await run(entry, hook, `return fetch("/counts", { credentials: "${mode}" });`, endpoint);
-        assert.equal(result["pinta.facts"], undefined);
-        assert.equal(result["pinta.credential_matches"], undefined);
+        for (const code of [
+          `return fetch("/counts", { credentials: "${mode}" });`,
+          `const counts = {};\nfor (const key of ["allow", "deny"]) counts[key] = await fetch("/counts", {credentials:"${mode}"});\nwindow.savedSummary = await fetch("/summary", {credentials:"${mode}"});`,
+        ]) {
+          const result = await run(entry, hook, code, endpoint);
+          assert.equal(result["pinta.facts"], undefined);
+          assert.equal(result["pinta.credential_matches"], undefined);
+        }
       }
       for (const code of [
         'const input = { password: "include" }; return input;',
         'return fetch("/counts", { credentials: "FAKE0-nonstandard-value" });',
         'const fetch = custom; return fetch("/counts", { credentials: "include" });',
+        'Window.prototype.fetch = custom; return fetch("/counts", { credentials: "include" });',
+        'Object.assign(window.self, custom); return fetch("/counts", { credentials: "include" });',
       ]) {
         const result = await run(entry, hook, code, endpoint);
         const facts = JSON.parse(result["pinta.facts"]);
