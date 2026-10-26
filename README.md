@@ -19,6 +19,17 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 | **Pinta Manager v0.2+** | Manager installs and configures automatically | Yes — on manager reconcile |
 | **Marketplace `pinta-cc@pinta-ai`** | `/plugin marketplace add pinta-ai/pinta-cc` then `/plugin install pinta-cc@pinta-ai` | Yes — on Claude Code startup |
 
+Prerelease tags publish to npm `next` (Skax prereleases to `skax`); stable tags publish
+to `latest`. Stage-only changes must stay on a separate release branch:
+Marketplace users automatically consume `main`. A package dist-tag does not
+change an installed Manager's selected catalog or update its adaptor.
+
+`npm run smoke:credentials` exercises the built CJS and ESM hook entrypoints via
+stdin, using isolated homes and a loopback collector/ALLOW fixture. It verifies
+Fetch mode options, genuine/unknown candidates and value-free producer match
+provenance without executing the supplied JavaScript. An optional argument to
+`scripts/smoke-credentials.mjs` selects an unpacked published `dist` directory.
+
 ## Installation
 
 ### Pinta Manager (recommended for enterprise)

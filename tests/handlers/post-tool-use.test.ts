@@ -39,6 +39,31 @@ function span(payload: OtlpPayload) {
   return payload.resourceSpans[0].scopeSpans[0].spans[0];
 }
 
+function expectOriginalAttributesAndProvenance(judged: OtlpPayload, sent: OtlpPayload) {
+  const before = attributes(judged);
+  const after = attributes(sent);
+  for (const [key, value] of Object.entries(before))
+    if (key !== "pinta.facts") expect(after[key]).toEqual(value);
+  const originalFacts = JSON.parse(String(before["pinta.facts"]));
+  const storedFacts = JSON.parse(String(after["pinta.facts"]));
+  expect({
+    ...storedFacts,
+    items: storedFacts.items.map((item: Record<string, unknown>) => {
+      const { evidence, ...fact } = item;
+      expect(evidence).toEqual({ ruleId: "bearer_token" });
+      return fact;
+    }),
+  }).toEqual(originalFacts);
+  expect(before["pinta.credential_matches"]).toBeUndefined();
+  expect(JSON.parse(String(after["pinta.credential_matches"]))).toMatchObject({
+    version: 1, coordinateSpace: "original_attribute_utf16", complete: true,
+    items: expect.arrayContaining([expect.objectContaining({
+      attribute: "cc.tool_response", pattern: "bearer_token",
+      start: expect.any(Number), end: expect.any(Number),
+    })]),
+  });
+}
+
 function attributes(payload: OtlpPayload) {
   return Object.fromEntries(span(payload).attributes.map((attr) => [attr.key, Object.values(attr.value)[0]]));
 }
@@ -240,7 +265,9 @@ describe("handlePostToolUse — native output enforcement", () => {
       "pinta.guard.matched_rule": `rule: ${CANARY}`,
     });
     const added = span(sent).attributes.slice(span(judged).attributes.length).map((attr) => attr.key);
-    expect(added.every((key) => key.startsWith("pinta.guard.") || key.startsWith("pinta.client."))).toBe(true);
+    expect(added.every((key) => key.startsWith("pinta.guard.") || key.startsWith("pinta.client.") ||
+      key === "pinta.credential_matches")).toBe(true);
+    expectOriginalAttributesAndProvenance(judged, sent);
   });
 
   it.each([
@@ -331,7 +358,7 @@ describe("handlePostToolUse — native output enforcement", () => {
     expect(sent).toEqual(built);
     expect(span(sent).spanId).toBe(span(judged).spanId);
     expect(span(sent).traceId).toBe(span(judged).traceId);
-    expect(span(sent).attributes.slice(0, span(judged).attributes.length)).toEqual(span(judged).attributes);
+    expectOriginalAttributesAndProvenance(judged, sent);
     expect(attributes(judged)["cc.tool_response"]).toContain("[REDACTED:bearer_token]");
     expect(JSON.stringify(judged)).not.toContain(SENSITIVE);
     expect(attributes(sent)["cc.tool_response"]).toBe(attributes(judged)["cc.tool_response"]);

@@ -199,8 +199,33 @@ function assertEvidence(result, decision, failOpenReason) {
   assert.equal(after["pinta.client.op"], "guard");
   assert.equal(typeof after["pinta.client.rtt_ms"], "number");
   const original = structuredClone(sent[0]);
+  if (after["pinta.credential_matches"]) {
+    assert.equal(before["pinta.credential_matches"], undefined);
+    const locations = JSON.parse(after["pinta.credential_matches"]);
+    assert.equal(locations.version, 1);
+    assert.equal(locations.coordinateSpace, "original_attribute_utf16");
+    assert.equal(locations.complete, true);
+    assert.ok(locations.items.length > 0);
+    for (const item of locations.items) {
+      assert.deepEqual(Object.keys(item).sort(), ["attribute", "end", "pattern", "start"]);
+      assert.equal(item.attribute, "cc.tool_response");
+      assert.equal(item.pattern, "bearer_token");
+      assert.ok(Number.isInteger(item.start) && item.start >= 0);
+      assert.ok(Number.isInteger(item.end) && item.end > item.start);
+    }
+  }
+  const storedFacts = span(original).attributes.find((attr) => attr.key === "pinta.facts");
+  if (storedFacts && before["pinta.facts"]) {
+    const facts = JSON.parse(storedFacts.value.stringValue);
+    for (const item of facts.items) {
+      assert.deepEqual(item.evidence, { ruleId: "bearer_token" });
+      delete item.evidence;
+    }
+    storedFacts.value.stringValue = JSON.stringify(facts);
+  }
   span(original).attributes = span(original).attributes.filter(
-    (attr) => !attr.key.startsWith("pinta.guard.") && !attr.key.startsWith("pinta.client."),
+    (attr) => !attr.key.startsWith("pinta.guard.") && !attr.key.startsWith("pinta.client.") &&
+      attr.key !== "pinta.credential_matches",
   );
   assert.deepEqual(original, judged[0], "same original payload, traceId and spanId; no replacement evidence");
 }
