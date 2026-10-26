@@ -2,6 +2,21 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.4-pta843.0] - 2026-10-26
+
+### Changed
+
+- Pin Core `0.11.1-pta843.0`: supported direct Fetch `credentials` mode options
+  no longer become stored credential-field candidates. Shadowed/unknown
+  consumers, nonstandard values and actual passwords remain protected.
+- Stored telemetry retains value-free pattern/original-attribute ranges and
+  pre-mask nonstandard-mode counterevidence. It never reports those ranges as
+  offsets into masked text; the guard representation and batch response policy
+  remain unchanged.
+- Stage-only prerelease and catalog delivery are separate from Marketplace
+  `main`, npm `latest`, and `skax`. Native CJS/ESM regressions cover all three
+  affected hooks.
+
 ## [1.11.3] - 2026-10-19
 
 ### Changed
