@@ -8,6 +8,11 @@ import { fileURLToPath } from "node:url";
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dist = path.resolve(process.argv[2] ?? path.join(repo, "dist"));
+assert.equal(
+  fs.readFileSync(path.join(dist, "..", "LICENSE-ACORN"), "utf8").trim(),
+  fs.readFileSync(path.join(repo, "node_modules/acorn/LICENSE"), "utf8").trim(),
+  "the distribution must retain the bundled parser's complete license notice",
+);
 const root = fs.mkdtempSync(path.join(os.tmpdir(), "pinta-credential-smoke-"));
 let current;
 let checks = 0;

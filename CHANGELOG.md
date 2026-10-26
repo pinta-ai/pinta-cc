@@ -2,6 +2,16 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.4-pta843.1] - 2026-10-26
+
+### Fixed
+
+- Include the bundled Acorn parser's complete MIT notice in npm and Git
+  distributions; the native credential smoke check also verifies this file.
+- Supersede the initial prerelease without changing its immutable archive.
+  Manager catalog selection continues to prefer eligible stable adaptors;
+  publishing a prerelease is not an automatic installed-device rollout.
+
 ## [1.11.4-pta843.0] - 2026-10-26
 
 ### Changed
@@ -13,7 +23,7 @@ All notable changes to pinta-cc are documented here.
   pre-mask nonstandard-mode counterevidence. It never reports those ranges as
   offsets into masked text; the guard representation and batch response policy
   remain unchanged.
-- Stage-only prerelease and catalog delivery are separate from Marketplace
+- Stage-only prerelease distribution is separate from Marketplace
   `main`, npm `latest`, and `skax`. Native CJS/ESM regressions cover all three
   affected hooks.
 
