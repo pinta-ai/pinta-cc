@@ -24,7 +24,14 @@ to `latest`. Stage-only changes must stay on a separate release branch:
 Marketplace users automatically consume `main`. A package dist-tag does not
 change an installed Manager's selected catalog or update its adaptor.
 
-`npm run smoke:credentials` exercises the built CJS and ESM hook entrypoints via
+Manager catalog resolution prefers eligible stable releases over prereleases.
+This prerelease therefore does not replace the stable adaptor automatically,
+even when its manifest is available in a separate catalog branch. Production
+selection rules and active device settings are not changed for this release.
+
+The bundled Acorn parser's required MIT notice is included in `LICENSE-ACORN`.
+
+From a source checkout, `npm run smoke:credentials` exercises the built CJS and ESM hook entrypoints via
 stdin, using isolated homes and a loopback collector/ALLOW fixture. It verifies
 Fetch mode options, genuine/unknown candidates and value-free producer match
 provenance without executing the supplied JavaScript. An optional argument to
