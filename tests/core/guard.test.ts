@@ -22,7 +22,52 @@ const payload = () =>
 describe('evaluateGuard', () => {
   let originalFetch: typeof globalThis.fetch;
   beforeEach(() => { originalFetch = globalThis.fetch; });
-  afterEach(() => { globalThis.fetch = originalFetch; });
+  afterEach(() => { globalThis.fetch = originalFetch; vi.unstubAllEnvs(); });
+
+  it('holds an older manager only at the opted-in pre-execution boundary', async () => {
+    vi.stubEnv('PINTA_GUARD_FAILURE_MODE', 'hold');
+    globalThis.fetch = vi.fn(async () => new Response(
+      JSON.stringify({ decision: 'ALLOW', reason: null, durationMs: 1 }),
+    ));
+    expect(await evaluateGuard(payload(), 'http://guard.test/evaluate', true)).toMatchObject({
+      decision: 'DENY', assessment: { protocol: 'hold-v1', status: 'unavailable' },
+    });
+    expect(await evaluateGuard(payload(), 'http://guard.test/evaluate')).toMatchObject({
+      decision: 'ALLOW',
+    });
+  });
+
+  it('negotiates the exact required profile names and preserves an assessed REVIEW', async () => {
+    vi.stubEnv('PINTA_GUARD_FAILURE_MODE', 'hold');
+    vi.stubEnv('PINTA_GUARD_REQUIRED_RULES', 'deny_credentials, protected_read');
+    globalThis.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      expect(headers.get('x-pinta-guard-mode')).toBe('hold-v1');
+      expect(headers.get('x-pinta-required-rules')).toBe('deny_credentials,protected_read');
+      return new Response(JSON.stringify({
+        decision: 'REVIEW', reason: 'review_fixture', durationMs: 1,
+        assessment: { protocol: 'hold-v1', status: 'assessed' },
+      }));
+    });
+    expect(await evaluateGuard(payload(), 'http://guard.test/evaluate', true)).toMatchObject({
+      decision: 'REVIEW', reason: 'review_fixture', assessment: { status: 'assessed' },
+    });
+  });
+
+  it('holds missing endpoints and invalid bootstrap settings without changing normal mode', async () => {
+    vi.stubEnv('PINTA_GUARD_FAILURE_MODE', 'hold');
+    expect(await evaluateGuard(payload(), undefined, true)).toMatchObject({ decision: 'DENY' });
+    expect(await evaluateGuard(payload(), undefined)).toBeNull();
+    vi.stubEnv('PINTA_GUARD_FAILURE_MODE', 'invalid');
+    expect(await evaluateGuard(payload(), undefined, true)).toMatchObject({
+      decision: 'DENY', holdReason: 'configuration_invalid',
+    });
+    vi.stubEnv('PINTA_GUARD_FAILURE_MODE', 'hold');
+    vi.stubEnv('PINTA_GUARD_REQUIRED_RULES', '');
+    expect(await evaluateGuard(payload(), 'http://guard.test/evaluate', true)).toMatchObject({
+      decision: 'DENY', holdReason: 'configuration_invalid',
+    });
+  });
 
   it('returns null when PINTA_GUARD_ENDPOINT is unset (OSS path)', async () => {
     const r = await evaluateGuard(payload(), undefined);

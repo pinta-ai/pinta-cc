@@ -19,8 +19,9 @@ Converts Claude Code hook events into OTLP/HTTP spans and forwards them to any O
 | **Pinta Manager v0.2+** | Manager installs and configures automatically | Yes — on manager reconcile |
 | **Marketplace `pinta-cc@pinta-ai`** | `/plugin marketplace add pinta-ai/pinta-cc` then `/plugin install pinta-cc@pinta-ai` | Yes — on Claude Code startup |
 
-Prerelease tags publish to npm `next` (Skax prereleases to `skax`); stable tags publish
-to `latest`. Stage-only changes must stay on a separate release branch:
+Prerelease tags publish to npm `next` (Skax prereleases to `skax`,
+`*-hold.*` to isolated `high-risk`); stable tags publish to `latest`.
+Stage-only changes must stay on a separate release branch:
 Marketplace users automatically consume `main`. A package dist-tag does not
 change an installed Manager's selected catalog or update its adaptor.
 
@@ -99,6 +100,31 @@ The plugin reads OTel env vars directly. `CLAUDE_PLUGIN_OPTION_*` env vars (set 
 |------------------|-|
 | `CLAUDE_PLUGIN_OPTION_ENDPOINT` | `OTEL_EXPORTER_OTLP_ENDPOINT` |
 | `CLAUDE_PLUGIN_OPTION_API_KEY` | `OTEL_EXPORTER_OTLP_HEADERS=x-pinta-relay-token=<key>` |
+
+## Opt-in pre-tool high-risk protection
+
+The `high-risk` prerelease adds `PINTA_GUARD_FAILURE_MODE=hold` to
+**PreToolUse only**. Configure `PINTA_GUARD_ENDPOINT` and the compatible
+Manager `hold-v1` implementation first. Set `PINTA_GUARD_REQUIRED_RULES` to
+the comma-separated list returned by the organization's protected-read
+profile API, including its generated rule name. Without an explicit list,
+the required names are `deny_credentials,deny_create_system_path`; those
+baseline rules alone do not prohibit credential-file reads.
+
+An unavailable, disabled, stale, unsupported or failed inspection yields the
+native `permissionDecision: "deny"` response, with an inspection-unavailable
+message and **no matched policy rule**. An older Manager without `hold-v1`
+also holds. A valid policy assessment preserves ALLOW/REVIEW/DENY; REVIEW
+is not redefined. Normal installations remain fail-open.
+
+Saving a backend profile or installing this package does not activate the
+setting, prove the device received its rules, or prove host enforcement.
+Validate the actual host's response and model-facing tool result with a
+non-secret fixture. Post-tool inspection cannot undo an executed read.
+For recovery, restore the required rules and Manager connection, then retry.
+Turning off the opt-in setting returns to ordinary fail-open behavior; it
+must not be described as restored high-risk protection. The host can still
+ignore or remove hooks, and this is not an OS sandbox.
 
 ## Tool-output guard and recovery
 
