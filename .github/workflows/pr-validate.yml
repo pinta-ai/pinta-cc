@@ -28,3 +28,4 @@ jobs:
       - run: npm run smoke:import && npm run smoke:version
       - run: npm run smoke:model
       - run: npm run smoke:guard
+      - run: npm run smoke:credentials

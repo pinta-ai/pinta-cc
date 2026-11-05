@@ -2,6 +2,41 @@
 
 All notable changes to pinta-cc are documented here.
 
+## [1.11.4-pta843.2] - 2026-10-26
+
+### Fixed
+
+- Consume Core `0.11.1-pta843.1`: storing a Fetch result on an unrelated static
+  browser-global property is not treated as rebinding Fetch. Explicit binding,
+  global-alias and reflective mutation paths remain unresolved and protected.
+- Extend all three native hooks in CJS and ESM with result-storage and binding
+  counterexamples. Retain the bundled parser notice and prerelease-only channel.
+
+## [1.11.4-pta843.1] - 2026-10-26
+
+### Fixed
+
+- Include the bundled Acorn parser's complete MIT notice in npm and Git
+  distributions; the native credential smoke check also verifies this file.
+- Supersede the initial prerelease without changing its immutable archive.
+  Manager catalog selection continues to prefer eligible stable adaptors;
+  publishing a prerelease is not an automatic installed-device rollout.
+
+## [1.11.4-pta843.0] - 2026-10-26
+
+### Changed
+
+- Pin Core `0.11.1-pta843.0`: supported direct Fetch `credentials` mode options
+  no longer become stored credential-field candidates. Shadowed/unknown
+  consumers, nonstandard values and actual passwords remain protected.
+- Stored telemetry retains value-free pattern/original-attribute ranges and
+  pre-mask nonstandard-mode counterevidence. It never reports those ranges as
+  offsets into masked text; the guard representation and batch response policy
+  remain unchanged.
+- Stage-only prerelease distribution is separate from Marketplace
+  `main`, npm `latest`, and `skax`. Native CJS/ESM regressions cover all three
+  affected hooks.
+
 ## [1.11.3] - 2026-10-19
 
 ### Changed

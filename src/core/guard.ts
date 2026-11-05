@@ -12,23 +12,31 @@
 // summary of the event. The manager projects that span through the AgentEvent
 // assembly its relay and the backend already use, so the verdict a hook gets is
 // the verdict the stored event would get. See `handlers/pre-tool-use.ts`.
-import { evaluateGuard as coreEvaluateGuard } from "@pinta-ai/core";
+import { evaluateGuard as coreEvaluateGuard, holdGuard } from "@pinta-ai/core";
 import type { GuardPayload, GuardResult } from "@pinta-ai/core";
 
 export type { GuardPayload, GuardResult } from "@pinta-ai/core";
 
 const TIMEOUT_MS = 10_000;
 // Keep in sync with package.json. The manager parses `pinta-cc/<version>`.
-const GUARD_UA = "pinta-cc/1.11.3";
+const GUARD_UA = "pinta-cc/1.11.4-hold.1";
 
 export function evaluateGuard(
   payload: GuardPayload,
   endpoint: string | undefined,
+  preExecution = false,
 ): Promise<GuardResult | null> {
+  const mode = preExecution ? process.env.PINTA_GUARD_FAILURE_MODE : undefined;
+  if (mode !== undefined && mode !== "open" && mode !== "hold") {
+    return Promise.resolve(holdGuard("configuration_invalid"));
+  }
+  const required = process.env.PINTA_GUARD_REQUIRED_RULES;
   return coreEvaluateGuard(payload, endpoint, {
     timeoutMs: TIMEOUT_MS,
     token: process.env.PINTA_RELAY_TOKEN ?? "",
     disabled: process.env.PINTA_GUARD_DISABLED === "1",
     userAgent: GUARD_UA,
+    failureMode: mode,
+    ...(preExecution && required !== undefined ? { requiredRules: required.split(",").map((rule) => rule.trim()) } : {}),
   });
 }
