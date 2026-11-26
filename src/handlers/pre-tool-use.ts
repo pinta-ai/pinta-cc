@@ -16,7 +16,7 @@ export async function handlePreToolUse(
   // the summary). Now there is one reading; the manager projects it through
   // the same AgentEvent assembly the backend uses to store it.
   const payload = buildEventPayload(event, config);
-  const guard = await evaluateGuard(payload, process.env.PINTA_GUARD_ENDPOINT);
+  const guard = await evaluateGuard(payload, process.env.PINTA_GUARD_ENDPOINT, true);
 
   // Print the native decision first, then persist locally and finish. Waiting
   // for telemetry can make the host discard even valid DENY JSON on timeout.

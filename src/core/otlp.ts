@@ -35,7 +35,7 @@ function processOwner(): string {
   return cachedProcessOwner;
 }
 
-const PLUGIN_VERSION = "1.11.3"; // keep in sync with .claude-plugin/plugin.json
+const PLUGIN_VERSION = "1.11.4-pta1010.1"; // keep in sync with .claude-plugin/plugin.json
 
 /**
  * Attribute keys for which redaction (Tier 1) is skipped. Truncation (Tier 3)
@@ -65,6 +65,17 @@ const BASH_CONTEXT_KEYS: ReadonlySet<string> = new Set([
 const ATTR_POLICY: AttrPolicy = {
   skipRedactKeys: SKIP_REDACT_KEYS,
   bashContextKeys: BASH_CONTEXT_KEYS,
+  outputForKey: (key, value) => {
+    if (key === "cc.tool_response") return value;
+    if (key === "cc.tool_calls" && Array.isArray(value)) {
+      return value.map((call: unknown) =>
+        call !== null && typeof call === "object" && "tool_response" in call
+          ? call.tool_response
+          : undefined,
+      );
+    }
+    return undefined;
+  },
 };
 
 function flattenEvent(event: BaseEvent, now: number): OtlpAttribute[] {
