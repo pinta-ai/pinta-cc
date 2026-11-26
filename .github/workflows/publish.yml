@@ -30,6 +30,7 @@ jobs:
       - run: npm ci
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NPM_CONFIG_USERCONFIG: /dev/null
 
       - run: npm run build
 
@@ -55,6 +56,7 @@ jobs:
         if: steps.check-version.outputs.skip == 'false'
         run: |
           case "$GITHUB_REF_NAME" in
+            *-hold.*) npm publish --access public --tag high-risk ;;
             *-skax.*) npm publish --access public --tag skax ;;
             *-*) npm publish --access public --tag next ;;
             *) npm publish --access public --tag latest ;;
