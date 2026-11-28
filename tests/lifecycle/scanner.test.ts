@@ -1,10 +1,16 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
+import { opendir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
 import { lifecycle, classify } from "../../src/lifecycle/scanner";
 import type { TranscriptFile } from "../../src/lifecycle/types";
+
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return { ...actual, opendir: vi.fn(actual.opendir) };
+});
 
 const SAVED_CLAUDE_CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR;
 
@@ -48,18 +54,64 @@ async function collect(iter: AsyncIterable<TranscriptFile>): Promise<Map<string,
 }
 
 beforeEach(() => {
+  vi.mocked(opendir).mockClear();
   tmpRoot = makeTmpDir();
   process.env.CLAUDE_CONFIG_DIR = tmpRoot;
   buildFixture();
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   fs.rmSync(tmpRoot, { recursive: true, force: true });
   if (SAVED_CLAUDE_CONFIG_DIR === undefined) {
     delete process.env.CLAUDE_CONFIG_DIR;
   } else {
     process.env.CLAUDE_CONFIG_DIR = SAVED_CLAUDE_CONFIG_DIR;
   }
+});
+
+describe("scan resource bounds", () => {
+  it("honors cancellation before opening and while a scan is suspended", async () => {
+    const stopped = new AbortController();
+    stopped.abort(new Error("stopped before scan"));
+    await expect(collect(lifecycle.scan({ signal: stopped.signal }))).rejects.toBe(stopped.signal.reason);
+    expect(opendir).not.toHaveBeenCalled();
+    const active = new AbortController();
+    const iterator = lifecycle.scan({ signal: active.signal })[Symbol.asyncIterator]();
+    expect((await iterator.next()).done).toBe(false);
+    active.abort(new Error("stopped active scan"));
+    await expect(iterator.next()).rejects.toBe(active.signal.reason);
+  });
+
+  it("yields during opaque entries and closes the directory on cancellation", async () => {
+    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const [root] = await lifecycle.roots();
+    const directory = await actual.opendir(root);
+    const entry = fs.readdirSync(root, { withFileTypes: true })[0];
+    vi.spyOn(entry, "isDirectory").mockReturnValue(false);
+    vi.spyOn(entry, "isFile").mockReturnValue(false);
+    const controller = new AbortController();
+    let visited = 0;
+    vi.spyOn(directory, Symbol.asyncIterator).mockImplementation(async function* () {
+      const task = setImmediate(() => controller.abort(new Error("stop opaque traversal")));
+      try {
+        for (; visited < 10_000; visited++) yield entry;
+      } finally {
+        clearImmediate(task);
+        await directory.close();
+      }
+    });
+    vi.mocked(opendir).mockResolvedValueOnce(directory);
+    await expect(collect(lifecycle.scan({ signal: controller.signal }))).rejects.toThrow("stop opaque traversal");
+    expect(visited).toBeLessThan(10_000);
+    await expect(Promise.resolve().then(() => directory.read())).rejects.toMatchObject({ code: "ERR_DIR_CLOSED" });
+  });
+
+  it("surfaces filesystem failures instead of reporting an empty successful scan", async () => {
+    const failure = Object.assign(new Error("synthetic I/O failure"), { code: "EIO" });
+    vi.mocked(opendir).mockRejectedValueOnce(failure);
+    await expect(collect(lifecycle.scan({}))).rejects.toMatchObject({ cause: failure });
+  });
 });
 
 describe("lifecycle.id / roots()", () => {

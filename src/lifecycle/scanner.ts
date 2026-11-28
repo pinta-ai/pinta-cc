@@ -14,8 +14,9 @@
  * specific globals) so it runs unmodified whether the sidecar host is Node
  * or Bun.
  */
-import { opendir, stat } from "node:fs/promises";
+import { opendir, lstat } from "node:fs/promises";
 import { homedir } from "node:os";
+import { setImmediate as yieldToEventLoop } from "node:timers/promises";
 import path from "node:path";
 
 import type {
@@ -26,6 +27,16 @@ import type {
 } from "./types.js";
 
 const WRAPPER_ID = "pinta-cc";
+
+interface ScanControl {
+  signal?: AbortSignal;
+  visited: number;
+}
+
+function missingPath(error: unknown): boolean {
+  return error instanceof Error && "code" in error &&
+    (error.code === "ENOENT" || error.code === "ENOTDIR");
+}
 
 /** Directory name under a project that holds non-session notes (no sessionId). */
 const MEMORY_DIR = "memory";
@@ -114,21 +125,28 @@ export async function roots(): Promise<string[]> {
  * whole tree) in memory at once — the corpus is 77 projects / 887 files /
  * 288MB and growing (plan §3.1).
  */
-async function* walkFiles(root: string, dir: string): AsyncGenerator<{ absPath: string; relPath: string }> {
+async function* walkFiles(root: string, dir: string, control: ScanControl): AsyncGenerator<{ absPath: string; relPath: string }> {
+  control.signal?.throwIfAborted();
   let entries;
   try {
     entries = await opendir(dir);
-  } catch {
-    // Root doesn't exist yet (fresh install, no sessions recorded) or
-    // vanished mid-walk (deleted project) — nothing to yield.
-    return;
+  } catch (error) {
+    control.signal?.throwIfAborted();
+    if (missingPath(error)) return;
+    throw new Error("Claude Code transcript directory could not be opened", { cause: error });
   }
 
   try {
     for await (const entry of entries) {
+      control.signal?.throwIfAborted();
+      if (++control.visited === 128) {
+        control.visited = 0;
+        await yieldToEventLoop();
+        control.signal?.throwIfAborted();
+      }
       const absPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        yield* walkFiles(root, absPath);
+        yield* walkFiles(root, absPath, control);
       } else if (entry.isFile()) {
         yield { absPath, relPath: toPosixRelPath(root, absPath) };
       }
@@ -136,26 +154,30 @@ async function* walkFiles(root: string, dir: string): AsyncGenerator<{ absPath: 
       // produce them under `projects/`, and following them risks escaping
       // the root or cycles.
     }
-  } catch {
-    // Directory removed while we were iterating it — treat as end of
-    // stream for this subtree rather than failing the whole scan.
-    return;
+  } catch (error) {
+    control.signal?.throwIfAborted();
+    if (missingPath(error)) return;
+    throw new Error("Claude Code transcript directory scan failed", { cause: error });
   }
 }
 
-async function* scan(opts: { since?: Date }): AsyncIterable<TranscriptFile> {
+async function* scan(opts: { since?: Date; signal?: AbortSignal }): AsyncIterable<TranscriptFile> {
+  opts.signal?.throwIfAborted();
   const [root] = await roots();
   const sinceMs = opts.since?.getTime();
+  const control: ScanControl = { signal: opts.signal, visited: 0 };
 
-  for await (const { absPath, relPath } of walkFiles(root, root)) {
+  for await (const { absPath, relPath } of walkFiles(root, root, control)) {
+    opts.signal?.throwIfAborted();
     let st;
     try {
-      st = await stat(absPath);
-    } catch {
-      // Removed between listing and stat (TOCTOU) — skip, next cycle will
-      // simply not see it either (plan §4.1 "삭제됨: 스킵").
-      continue;
+      st = await lstat(absPath);
+    } catch (error) {
+      if (missingPath(error)) continue;
+      throw new Error("Claude Code transcript file could not be inspected", { cause: error });
     }
+    opts.signal?.throwIfAborted();
+    if (!st.isFile()) continue;
 
     if (sinceMs !== undefined && st.mtime.getTime() <= sinceMs) {
       continue;
